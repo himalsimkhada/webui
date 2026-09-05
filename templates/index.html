@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web UI Admin</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Web UI <span class="dim">Admin</span></h1>
+  <div class="header-right">
+    <nav>
+      <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">Dashboard</button>
+      <button class="nav-btn" data-view="nginx" onclick="switchView('nginx')">Nginx</button>
+      <button class="nav-btn" data-view="bind" onclick="switchView('bind')">BIND</button>
+    </nav>
+    <button class="nav-btn logout-btn hidden" id="logout-btn" onclick="logout()" title="Log out">Log out</button>
+    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" id="theme-btn">&#9790;</button>
+  </div>
+</header>
+
+<!-- Login -->
+<section id="view-login" class="view login-view hidden">
+  <div class="card login-card">
+    <h2 class="login-title">Web UI <span class="dim">Admin</span></h2>
+    <p class="login-msg">Enter the UI password to continue. Sessions auto-logout after 30 minutes. After 5 failed attempts, login is locked for 15 minutes.</p>
+    <div class="login-form">
+      <label for="login-password">Password</label>
+      <input type="password" id="login-password" placeholder="UI password" autocomplete="current-password" />
+      <label class="login-remember">
+        <input type="checkbox" id="login-remember" /> Remember me for 30 minutes
+      </label>
+      <button id="login-btn" onclick="login()">Log in</button>
+      <div id="login-error" class="status-error hidden"></div>
+    </div>
+  </div>
+</section>
+
+<main id="app-main">
+  <!-- Dashboard -->
+  <section id="view-dashboard" class="view active">
+    <div class="card">
+      <h3>Modules</h3>
+      <div id="modules-grid" class="modules-grid"></div>
+      <div id="modules-error" class="status-error hidden"></div>
+    </div>
+
+    <div class="card-row">
+      <div class="card">
+        <h3>System Status</h3>
+        <div class="stat-grid" id="sys-grid"></div>
+      </div>
+      <div class="card">
+        <h3>Portal (this service)</h3>
+        <div class="portal-metrics" id="portal-metrics"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Nginx -->
+  <section id="view-nginx" class="view">
+    <div class="card">
+      <h3>Nginx Status</h3>
+      <div class="stat-grid" id="nstat-grid"></div>
+      <div class="card-actions">
+        <button onclick="nginxAction('reload')">Reload Config</button>
+        <button onclick="nginxAction('check')">Check (nginx -t)</button>
+        <button class="danger" onclick="nginxAction('restart')">Restart</button>
+        <pre id="nginx-action-output" class="small-output"></pre>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Sites</h3>
+      <table>
+        <thead><tr><th>Name</th><th>State</th><th></th></tr></thead>
+        <tbody id="sites-body"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Logs</h3>
+      <div class="log-controls">
+        <select id="nlog-lines">
+          <option value="50">50 lines</option>
+          <option value="100" selected>100 lines</option>
+          <option value="200">200 lines</option>
+          <option value="500">500 lines</option>
+        </select>
+        <input id="nlog-filter" placeholder="filter..." style="width:200px" />
+        <button onclick="loadNginxLogs()">Load</button>
+      </div>
+      <div class="log-output" id="nlog-output">Loading logs...</div>
+    </div>
+
+    <div class="card">
+      <h3>Backup / Restore</h3>
+      <div class="btn-row">
+        <button onclick="nginxBackup()">Download Backup</button>
+        <label class="file-btn secondary" for="nrestore-file">Restore Backup</label>
+        <input type="file" id="nrestore-file" accept=".tar.gz,.gz" style="display:none" />
+        <span id="nbackup-status" class="small-text"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- BIND -->
+  <section id="view-bind" class="view">
+    <div class="card">
+      <h3>Bind Status</h3>
+      <div class="stat-grid" id="bstat-grid"></div>
+      <div class="card-actions">
+        <button onclick="bindAction('reload')">Reload Config</button>
+        <button onclick="bindAction('flush')">Flush Cache</button>
+        <button onclick="bindAction('stats')">Stats</button>
+        <button onclick="bindAction('querylog')">Toggle Query Log</button>
+        <button class="secondary" onclick="bindCheckConfig()">Check Config</button>
+        <pre id="bind-action-output" class="small-output"></pre>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Zones</h3>
+      <table>
+        <thead><tr><th>Zone</th><th>Source</th><th>Records</th></tr></thead>
+        <tbody id="bzone-body"></tbody>
+      </table>
+      <div id="bzone-note" class="small-text"></div>
+    </div>
+
+    <div class="card">
+      <h3>Backup / Restore</h3>
+      <div class="btn-row">
+        <button onclick="bindBackup()">Download Backup</button>
+        <label class="file-btn secondary" for="brestore-file">Restore Backup</label>
+        <input type="file" id="brestore-file" accept=".tar.gz,.gz" style="display:none" />
+        <span id="bbackup-status" class="small-text"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Web UI Admin — systemd unit (bare-metal). Edit paths to your checkout.
+[Unit]
+Description=Web UI Admin (admin frontend for bind9-webui / nginx-webui)
+After=network.target
+
+[Service]
+Type=simple
+User=himal
+WorkingDirectory=/path/to/webui
+EnvironmentFile=-/etc/webui.env
+ExecStart=/usr/bin/env python3 /path/to/webui/app.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
