@@ -118,6 +118,20 @@
     </div>
 
     <div class="card">
+      <div class="section-head">
+        <div>
+          <h3>SSL Certificates</h3>
+          <span class="small-text">Named cert/key pairs to reuse in the site forms.</span>
+        </div>
+        <button class="primary" onclick="openAddSsl()">Add certificate</button>
+      </div>
+      <table>
+        <thead><tr><th>Name</th><th>Certificate path</th><th>Key path</th><th>Actions</th></tr></thead>
+        <tbody id="ssl-body"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
       <h3>Logs</h3>
       <div class="log-controls">
         <select id="nlog-lines">

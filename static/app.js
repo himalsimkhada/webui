@@ -103,6 +103,7 @@ let EDIT = { kind: "file", name: "" };   // config editor target
 let EDIT_CAN_FORM = false;               // current site editable as a form
 let EDIT_SITE_VIEW = "config";           // current view inside edit modal
 let NCONF_UNLOCKED = new Set();          // config files explicitly unlocked for editing
+let SSL_CERTS = [];                      // saved nginx cert/key pairs
 
 function servicesOf(type) {
   return SERVICES.filter((s) => s.type === type && s.enabled);
@@ -148,6 +149,7 @@ async function enterNginx() {
   await loadServicesSilently();
   populateInstances();
   await loadNginxFiles();
+  await loadSslCerts();
   loadNginx();
 }
 async function enterBind() {
@@ -637,6 +639,13 @@ function proxyTlsFields(p, v) {
   return `
     <label class="svc-check"><input type="checkbox" id="${p}-tls" ${on ? "checked" : ""} onchange="proxyTlsToggle('${p}')"> Enable TLS (https)</label>
     <div class="form-row ${on ? "" : "hidden"}" id="${p}-tls-sec">
+      <div class="field" style="grid-column:1/-1">
+        <label>Saved certificate</label>
+        <select id="${p}-ssl" onchange="applySslChoice('${p}')">
+          ${sslOptions(v)}
+        </select>
+        <span class="svc-hint">Pick a named certificate to auto-fill the paths, or type them manually below.</span>
+      </div>
       <div class="field">
         <label>Certificate path</label>
         <input id="${p}-cert" placeholder="/etc/letsencrypt/live/…/fullchain.pem" value="${esc(v.cert || "")}">
@@ -661,6 +670,111 @@ function proxyTlsFields(p, v) {
         <span class="svc-hint">proxy_read_timeout, default is 60s.</span>
       </div>
     </div>`;
+}
+
+function sslOptions(v) {
+  v = v || {};
+  const matched = SSL_CERTS.find((c) => c.cert === v.cert && c.key === v.key);
+  const list = SSL_CERTS.map((c) =>
+    `<option value="${esc(c.name)}" ${matched && c.name === matched.name ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  return `<option value="">— type paths manually —</option>` + list;
+}
+
+function applySslChoice(p) {
+  const c = SSL_CERTS.find((x) => x.name === $(p + "-ssl").value);
+  if (!c) return;
+  $(p + "-tls").checked = true;
+  proxyTlsToggle(p);
+  $(p + "-cert").value = c.cert;
+  $(p + "-key").value = c.key;
+}
+
+async function loadSslCerts() {
+  try {
+    const r = await api(NX("api/ssl"));
+    SSL_CERTS = r.data || [];
+  } catch (e) { SSL_CERTS = []; }
+  renderSslCerts();
+}
+
+function renderSslCerts() {
+  const body = $("ssl-body");
+  if (!body) return;
+  body.innerHTML = SSL_CERTS.length
+    ? SSL_CERTS.map((c) => `
+      <tr>
+        <td>${esc(c.name)}</td>
+        <td class="small-text">${esc(c.cert)}</td>
+        <td class="small-text">${esc(c.key)}</td>
+        <td class="btn-row" style="margin:0">
+          <button class="primary" onclick="openEditSsl('${esc(c.name)}')">Edit</button>
+          <button class="danger" onclick="deleteSslCert('${esc(c.name)}')">Delete</button>
+        </td>
+      </tr>`).join("")
+    : `<tr><td colspan="4" class="small-text">No saved certificates. Add one to reuse it in the site forms.</td></tr>`;
+}
+
+function sslModal(title, v) {
+  openModal(title, `
+    <div class="modal-form">
+      <div class="field">
+        <label>Name</label>
+        <input id="ssl-name" value="${esc(v.name || "")}" ${v.name ? "disabled" : ""} placeholder="e.g. letsencrypt-main" autofocus>
+        <span class="svc-hint">Shown in the site form dropdown.</span>
+      </div>
+      <div class="field">
+        <label>Certificate path</label>
+        <input id="ssl-cert" value="${esc(v.cert || "")}" placeholder="/etc/letsencrypt/live/…/fullchain.pem">
+      </div>
+      <div class="field">
+        <label>Key path</label>
+        <input id="ssl-key" value="${esc(v.key || "")}" placeholder="/etc/letsencrypt/live/…/privkey.pem">
+      </div>
+      <div id="ssl-form-error" class="status-error hidden"></div>
+      <div class="modal-actions">
+        <button class="primary" onclick="saveSsl(${v.name ? `'${esc(v.name)}'` : "null"})">${v.name ? "Save changes" : "Add certificate"}</button>
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>`);
+}
+
+function openAddSsl() { sslModal("Add SSL certificate", {}); }
+
+function openEditSsl(name) {
+  const c = SSL_CERTS.find((x) => x.name === name);
+  if (c) sslModal("Edit SSL certificate", c);
+}
+
+async function saveSsl(editName) {
+  const errEl = $("ssl-form-error");
+  const fail = (m) => { errEl.textContent = m; errEl.classList.remove("hidden"); };
+  errEl.classList.add("hidden");
+  const name = $("ssl-name").value.trim();
+  const cert = $("ssl-cert").value.trim();
+  const key = $("ssl-key").value.trim();
+  if (!name) { fail("Name is required."); return; }
+  if (!cert) { fail("Certificate path is required."); return; }
+  if (!key) { fail("Key path is required."); return; }
+  try {
+    if (editName) {
+      await api(NX("api/ssl/" + encodeURIComponent(editName)), { method: "PUT", body: JSON.stringify({ cert, key }) });
+      toast("Certificate updated");
+    } else {
+      await api(NX("api/ssl"), { method: "POST", body: JSON.stringify({ name, cert, key }) });
+      toast("Certificate added");
+    }
+    closeModal();
+    await loadSslCerts();
+  } catch (e) { fail(e.message); }
+}
+
+async function deleteSslCert(name) {
+  if (!confirm(`Delete saved certificate '${name}'?`)) return;
+  try {
+    await api(NX("api/ssl/" + encodeURIComponent(name)), { method: "DELETE", body: "{}" });
+    toast("Certificate deleted");
+    await loadSslCerts();
+  } catch (e) { toast(e.message, false); }
 }
 
 function openNewSite() {
