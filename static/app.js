@@ -100,6 +100,8 @@ async function logout() {
 let SERVICES = [];
 let SVC = { nginx: "", bind: "" };
 let EDIT = { kind: "file", name: "" };   // config editor target
+let EDIT_CAN_FORM = false;               // current site editable as a form
+let EDIT_SITE_VIEW = "config";           // current view inside edit modal
 
 function servicesOf(type) {
   return SERVICES.filter((s) => s.type === type && s.enabled);
@@ -307,6 +309,7 @@ async function loadServices() {
         <td><span class="badge ${cls}" title="${esc(s.error || "")}">${status}</span></td>
         <td class="btn-row" style="margin:0">
           ${manage ? `<button class="secondary" onclick="openModule('${esc(s.name)}','${esc(s.type)}')">Manage</button>` : ""}
+          <button class="secondary" onclick="openEditService('${esc(s.name)}')">Edit</button>
           <button class="secondary" onclick="viewModule('${esc(s.name)}')">Metrics</button>
           <button class="secondary" onclick="testService('${esc(s.name)}')">Test</button>
           <button class="secondary" onclick="toggleService('${esc(s.name)}')">${s.enabled ? "Disable" : "Enable"}</button>
@@ -341,51 +344,72 @@ function svcPreview() {
   return url;
 }
 
-function openAddService() {
-  openModal("Register a service", `
+function splitUrl(url) {
+  const m = /^([a-z]+):\/\/([^:/]+)(?::(\d+))?/i.exec(url || "");
+  return m ? { scheme: m[1].toLowerCase(), host: m[2], port: m[3] || "" }
+           : { scheme: "http", host: (url || "").split("/")[0] || "", port: "" };
+}
+
+function svcForm(svc) {
+  const edit = !!svc;
+  const hp = splitUrl(edit ? svc.url : "");
+  return `
     <div class="modal-form">
       <div class="form-row">
         <div class="field">
           <label>Name</label>
-          <input id="svc-name" placeholder="e.g. nginx-us-e" autofocus>
-          <span class="svc-hint">Unique handle shown across the portal.</span>
+          <input id="svc-name" value="${edit ? esc(svc.name) : ""}" ${edit ? "disabled" : "placeholder=\"e.g. nginx-us-e\" autofocus"}>
+          <span class="svc-hint">${edit ? "Read-only identifier." : "Unique handle shown across the portal."}</span>
         </div>
         <div class="field">
           <label>Type</label>
           <select id="svc-type">
-            <option value="nginx">nginx</option>
-            <option value="bind">BIND</option>
-            <option value="other">other</option>
+            <option value="nginx" ${edit && svc.type === "nginx" ? "selected" : ""}>nginx</option>
+            <option value="bind" ${edit && svc.type === "bind" ? "selected" : ""}>BIND</option>
+            <option value="other" ${!edit || svc.type === "other" ? "selected" : ""}>other</option>
           </select>
           <span class="svc-hint">Decides which panel manages it.</span>
         </div>
       </div>
       <div class="field">
         <label>Scheme</label>
-        <div class="seg" id="svc-scheme" data-val="http">
-          <button type="button" class="seg-btn active" onclick="pickScheme(this,'http')">http</button>
-          <button type="button" class="seg-btn" onclick="pickScheme(this,'https')">https</button>
+        <div class="seg" id="svc-scheme" data-val="${hp.scheme}">
+          <button type="button" class="seg-btn ${hp.scheme === "http" ? "active" : ""}" onclick="pickScheme(this,'http')">http</button>
+          <button type="button" class="seg-btn ${hp.scheme === "https" ? "active" : ""}" onclick="pickScheme(this,'https')">https</button>
         </div>
       </div>
       <div class="form-row">
         <div class="field">
           <label>Host</label>
-          <input id="svc-host" placeholder="e.g. 192.168.1.10" oninput="svcPreview()">
+          <input id="svc-host" value="${edit ? esc(hp.host) : ""}" placeholder="e.g. 192.168.1.10" oninput="svcPreview()">
           <span class="svc-hint">IP or DNS name of the backend.</span>
         </div>
         <div class="field">
           <label>Port</label>
-          <input id="svc-port" type="number" placeholder="e.g. 8400" oninput="svcPreview()">
+          <input id="svc-port" type="number" value="${edit ? esc(hp.port) : ""}" placeholder="e.g. 8400" oninput="svcPreview()">
           <span class="svc-hint">Backend port, e.g. 8400.</span>
         </div>
       </div>
-      <div class="url-preview">It will connect to <code id="svc-preview">enter a host</code></div>
+      ${edit ? `<label class="svc-check"><input type="checkbox" id="svc-enabled" ${svc.enabled ? "checked" : ""}> Enabled</label>` : ""}
+      <div class="url-preview">It will connect to <code id="svc-preview"></code></div>
       <div id="svc-form-error" class="status-error hidden"></div>
       <div class="modal-actions">
-        <button class="primary" onclick="addService()">Register service</button>
+        <button class="primary" onclick="${edit ? "updateService('" + svc.name + "')" : "addService()"}">${edit ? "Save changes" : "Register service"}</button>
         <button class="secondary" onclick="closeModal()">Cancel</button>
       </div>
-    </div>`);
+    </div>`;
+}
+
+function openAddService() {
+  openModal("Register a service", svcForm(null));
+  svcPreview();
+}
+
+async function openEditService(name) {
+  const svc = SERVICES.find((s) => s.name === name);
+  if (!svc) { toast("Unknown service", false); return; }
+  openModal("Edit service · " + name, svcForm(svc));
+  svcPreview();
 }
 
 async function addService() {
@@ -405,6 +429,29 @@ async function addService() {
   try {
     await api("/api/services", { method: "POST", body: JSON.stringify({ name, type, url }) });
     toast("Service registered");
+    closeModal();
+    loadServices();
+  } catch (e) { fail(e.message); }
+}
+
+async function updateService(name) {
+  const type = $("svc-type").value;
+  const host = $("svc-host").value.trim();
+  const port = $("svc-port").value.trim();
+  const errEl = $("svc-form-error");
+  const fail = (msg) => { errEl.textContent = msg; errEl.classList.remove("hidden"); };
+  errEl.classList.add("hidden");
+  if (!host) { fail("Host is required."); return; }
+  if (port && !/^\d{1,5}$/.test(port)) { fail("Port must be a number (1-65535)."); return; }
+  const scheme = $("svc-scheme").dataset.val || "http";
+  let url = scheme + "://" + host;
+  if (port) url += ":" + port;
+  try {
+    await api("/api/services/" + encodeURIComponent(name), {
+      method: "PUT",
+      body: JSON.stringify({ type, url, enabled: $("svc-enabled").checked }),
+    });
+    toast("Service updated");
     closeModal();
     loadServices();
   } catch (e) { fail(e.message); }
@@ -634,70 +681,97 @@ async function openEditSite(name) {
     const f = d.fields || {};
     const canForm = !!(f.server_name && f.proxy_pass);
     EDIT = { kind: "site", name };
-    openModal("Edit site " + name, `
-      <div class="tabs">
-        ${canForm ? `<button class="tab active" id="tab-form" onclick="siteTab('form')">Form</button>` : ""}
-        <button class="tab ${canForm ? "" : "active"}" id="tab-config" onclick="siteTab('config')">Config</button>
-      </div>
-      ${canForm ? `
-      <div class="modal-form" id="edit-form-sec">
+    EDIT_CAN_FORM = canForm;
+    EDIT_SITE_VIEW = canForm ? "form" : "config";
+    openModal("Edit site · " + name, `
+      <div id="edit-form-sec" class="modal-form ${canForm ? "" : "hidden"}">
+        ${canForm ? `
         <div class="form-row">
           <div class="field">
-            <label>Domain (server_name)</label>
-            <input id="esite-domain" value="${esc(f.server_name)}">
+            <label>Application name</label>
+            <input id="esite-name" value="${esc(name)}" autofocus>
+            <span class="svc-hint">Config file id — changing it renames the site file.</span>
           </div>
           <div class="field">
             <label>Listen port</label>
             <input id="esite-port" type="number" value="${f.listen === null || f.listen === undefined ? "" : f.listen}">
+            <span class="svc-hint">External port of the server block.</span>
           </div>
+        </div>
+        <div class="field">
+          <label>Domain (server_name)</label>
+          <input id="esite-domain" value="${esc(f.server_name)}">
         </div>
         <div class="field">
           <label>Upstream (proxy_pass)</label>
           <input id="esite-upstream" value="${esc(f.proxy_pass)}">
+          <span class="svc-hint">Where nginx forwards requests.</span>
         </div>
         <label class="svc-check"><input type="checkbox" id="esite-ws" ${f.websocket ? "checked" : ""}> Enable websocket upgrade</label>
-        <p class="svc-hint">Saving via Form rewrites the server block from these fields. To keep custom directives, use the Config tab instead.</p>
         <div id="esite-form-error" class="status-error hidden"></div>
-      </div>` : ""}
-      <div class="modal-form ${canForm ? "hidden" : ""}" id="edit-config-sec">
+        <div class="modal-actions">
+          <button class="primary" onclick="saveEditedSite()">Save changes</button>
+          <button class="secondary" onclick="closeModal()">Cancel</button>
+        </div>` : `
+        <p class="svc-hint">This config has no simple proxy_pass to edit as a form. Use the raw config view.</p>`}
+      </div>
+      <div id="edit-config-sec" class="modal-form ${canForm ? "hidden" : ""}">
         <p class="svc-hint">Raw nginx config for ${esc(d.path || name)}.</p>
         <textarea id="esite-content" class="editor-textarea" rows="18" spellcheck="false">${esc(d.content || "")}</textarea>
+        <div class="modal-actions">
+          <button class="primary" onclick="saveSiteConfig()">Save config</button>
+          <button class="secondary" onclick="closeModal()">Cancel</button>
+        </div>
       </div>
-      <div class="modal-actions">
-        <button class="primary" onclick="saveEditedSite()">Save</button>
-        <button class="secondary" onclick="closeModal()">Cancel</button>
-      </div>`);
+      ${canForm ? `
+      <div class="edit-toggles">
+        <span class="small-text">Need more than these fields?</span>
+        <a href="#" onclick="editSiteView('form');return false" class="${canForm ? "on" : ""}" id="edit-link-form">Form</a> ·
+        <a href="#" onclick="editSiteView('config');return false" id="edit-link-config">Raw config</a>
+      </div>` : ""}`);
   } catch (e) { toast(e.message, false); }
 }
 
-function siteTab(kind) {
-  $("tab-form").classList.toggle("active", kind === "form");
-  $("tab-config").classList.toggle("active", kind === "config");
-  $("edit-form-sec").classList.toggle("hidden", kind !== "form");
-  $("edit-config-sec").classList.toggle("hidden", kind !== "config");
+function editSiteView(v) {
+  if (v === "form" && !EDIT_CAN_FORM) return;
+  EDIT_SITE_VIEW = v;
+  $("edit-form-sec").classList.toggle("hidden", v !== "form");
+  $("edit-config-sec").classList.toggle("hidden", v !== "config");
+  $("edit-link-form").classList.toggle("on", v === "form");
+  $("edit-link-config").classList.toggle("on", v === "config");
 }
 
 async function saveEditedSite() {
-  const formTab = $("tab-form") && $("tab-form").classList.contains("active");
   const errEl = $("esite-form-error");
+  const fail = (m) => { errEl.textContent = m; errEl.classList.remove("hidden"); };
+  errEl.classList.add("hidden");
+  const name = $("esite-name").value.trim();
+  const domain = $("esite-domain").value.trim();
+  const upstream = $("esite-upstream").value.trim();
+  const port = parseInt($("esite-port").value || "80", 10);
+  if (!name) { fail("Application name is required."); return; }
+  if (!/^[\w.-]+$/.test(name)) { fail("Application name may only contain letters, digits, '.' , '-' or '_'."); return; }
+  if (!domain) { fail("Domain is required."); return; }
+  if (!upstream) { fail("Upstream URL is required."); return; }
   try {
-    if (formTab) {
-      const domain = $("esite-domain").value.trim();
-      const upstream = $("esite-upstream").value.trim();
-      const port = parseInt($("esite-port").value || "80", 10);
-      if (!domain) { errEl.textContent = "Domain is required."; errEl.classList.remove("hidden"); return; }
-      if (!upstream) { errEl.textContent = "Upstream URL is required."; errEl.classList.remove("hidden"); return; }
-      errEl.classList.add("hidden");
-      await api(NX("api/site/" + encodeURIComponent(EDIT.name)), {
-        method: "PUT",
-        body: JSON.stringify({ domain, upstream, port, websocket: $("esite-ws").checked }),
-      });
-    } else {
-      await api(NX("api/site/" + encodeURIComponent(EDIT.name)), {
-        method: "PUT", body: JSON.stringify({ content: $("esite-content").value }),
-      });
-    }
-    toast("Saved " + EDIT.name);
+    const res = await api(NX("api/site/" + encodeURIComponent(EDIT.name)), {
+      method: "PUT",
+      body: JSON.stringify({ domain, upstream, port, websocket: $("esite-ws").checked, new_name: name }),
+    });
+    const newName = (res.data && res.data.name) || EDIT.name;
+    toast(newName !== EDIT.name ? "Renamed to " + newName : "Saved " + EDIT.name);
+    closeModal();
+    ngxSites();
+  } catch (e) { fail(e.message); }
+}
+
+async function saveSiteConfig() {
+  try {
+    const res = await api(NX("api/site/" + encodeURIComponent(EDIT.name)), {
+      method: "PUT", body: JSON.stringify({ content: $("esite-content").value, new_name: EDIT.name }),
+    });
+    const newName = (res.data && res.data.name) || EDIT.name;
+    toast(newName !== EDIT.name ? "Renamed to " + newName : "Saved " + EDIT.name);
     closeModal();
     ngxSites();
   } catch (e) { toast(e.message, false); }
