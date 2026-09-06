@@ -62,45 +62,17 @@
   <!-- Services registry -->
   <section id="view-services" class="view">
     <div class="card">
-      <h3>Add Service</h3>
-      <div class="svc-fields">
-        <div class="svc-field">
-          <label>Name</label>
-          <input id="svc-name" placeholder="e.g. nginx-us-e" />
-          <span class="svc-hint">Unique ID shown in the UI.</span>
+      <div class="section-head">
+        <div>
+          <h3>Services</h3>
+          <div id="services-note" class="small-text"></div>
         </div>
-        <div class="svc-field">
-          <label>Type</label>
-          <select id="svc-type">
-            <option value="nginx">nginx</option>
-            <option value="bind">BIND</option>
-            <option value="other">other</option>
-          </select>
-          <span class="svc-hint">Decides which panel manages it.</span>
-        </div>
-        <div class="svc-field">
-          <label>Host or URL</label>
-          <input id="svc-url" placeholder="e.g. 192.168.1.10" />
-          <span class="svc-hint">Set https to reach it over TLS.</span>
-        </div>
-        <div class="svc-field">
-          <label>Port</label>
-          <input id="svc-port" type="number" placeholder="e.g. 8400" />
-          <span class="svc-hint">Backend port. Optional if in the URL.</span>
-        </div>
-        <label class="svc-check"><input type="checkbox" id="svc-https" /> Use https</label>
-        <button id="svc-add-btn" onclick="addService()">Add Service</button>
+        <button class="primary" onclick="openAddService()">Register service</button>
       </div>
-      <div id="svc-form-error" class="status-error hidden"></div>
-    </div>
-
-    <div class="card">
-      <h3>Registered Services</h3>
       <table>
         <thead><tr><th>Name</th><th>Type</th><th>URL</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody id="services-body"></tbody>
       </table>
-      <div id="services-note" class="small-text"></div>
     </div>
   </section>
 
@@ -131,51 +103,17 @@
     </div>
 
     <div class="card">
-      <h3>Sites</h3>
+      <div class="section-head">
+        <div>
+          <h3>Sites</h3>
+          <span class="small-text">Reverse-proxy server blocks in sites-available.</span>
+        </div>
+        <button class="primary" onclick="openNewSite()">New reverse-proxy site</button>
+      </div>
       <table>
         <thead><tr><th>Name</th><th>Config Path</th><th>State</th><th>Actions</th></tr></thead>
         <tbody id="sites-body"></tbody>
       </table>
-      <div class="card-actions">
-        <button onclick="toggleSitesForm()" id="sites-form-toggle">New reverse-proxy site</button>
-      </div>
-      <div id="sites-form" class="wizard-form hidden">
-        <div class="wizard-step">
-          <h4>1 · Naming</h4>
-          <div class="wizard-grid">
-            <div class="wizard-field">
-              <label>Site name</label>
-              <input id="nsite-name" placeholder="e.g. myapp" />
-              <span class="svc-hint">Config file id (optional — derived from domain).</span>
-            </div>
-            <div class="wizard-field">
-              <label>Domain</label>
-              <input id="nsite-domain" placeholder="e.g. app.example.com" />
-              <span class="svc-hint">The server_name nginx will match on.</span>
-            </div>
-          </div>
-        </div>
-        <div class="wizard-step">
-          <h4>2 · Upstream</h4>
-          <div class="wizard-grid">
-            <div class="wizard-field">
-              <label>Upstream URL</label>
-              <input id="nsite-upstream" placeholder="e.g. http://127.0.0.1:3000" />
-              <span class="svc-hint">Where nginx forwards requests.</span>
-            </div>
-            <div class="wizard-field">
-              <label>Listen on port</label>
-              <input id="nsite-port" type="number" placeholder="e.g. 80" value="80" />
-            </div>
-          </div>
-          <label class="svc-check"><input type="checkbox" id="nsite-ws" /> Enable websocket upgrade</label>
-        </div>
-        <div class="btn-row">
-          <button onclick="nginxCreateSite()">Create Site</button>
-          <button class="secondary" onclick="toggleSitesForm()">Cancel</button>
-        </div>
-        <div id="nsite-form-error" class="status-error hidden"></div>
-      </div>
     </div>
 
     <div class="card">
@@ -240,6 +178,15 @@
   </section>
 </main>
 
+<div id="modal-mask" class="modal-mask" onclick="maskClick(event)">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h3 id="modal-title"></h3>
+      <button class="modal-x" onclick="closeModal()" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
 <div id="toast" class="toast hidden"></div>
 <script src="/static/app.js"></script>
 </body>
