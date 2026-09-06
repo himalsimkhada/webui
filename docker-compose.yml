@@ -12,6 +12,9 @@ services:
       PORTAL_MODULES: ${PORTAL_MODULES:-nginx=http://host.docker.internal:8400,bind=http://host.docker.internal:5000}
       BACKEND_TIMEOUT: ${BACKEND_TIMEOUT:-5}
       SERVICE_NAME: webui
+      SERVICE_REGISTRY_FILE: /data/services.json
+    volumes:
+      - webui_data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -21,3 +24,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  webui_data:

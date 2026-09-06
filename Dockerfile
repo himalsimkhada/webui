@@ -14,7 +14,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py backends.py metrics.py system_info.py ./
+COPY app.py backends.py metrics.py registry.py system_info.py ./
 COPY templates ./templates
 COPY static ./static
 

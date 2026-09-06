@@ -4,35 +4,37 @@ The admin UI is a facade: it proxies /api requests to each registered module
 (nginx-webui, bind9-webui, ...) over HTTP ports. Backends share the same
 WEBUI_PASSWORD, so the facade logs in on its own session when a backend
 returns 401 and retries once.
+
+Modules are defined by the persistent service registry (registry.py), which
+is seeded from PORTAL_MODULES on first run.
 """
 import os
 import re
 
 import requests
+import registry
 
 WEBUI_PASSWORD = os.environ.get("WEBUI_PASSWORD", "").strip()
 BACKEND_TIMEOUT = float(os.environ.get("BACKEND_TIMEOUT", "5"))
 
-# Comma separated name=base_url pairs. Example:
-#   PORTAL_MODULES=nginx=http://127.0.0.1:8400,bind=http://127.0.0.1:5000
 MODULES = {}
 _sessions = {}
 
 
-def _parse_modules():
-    raw = os.environ.get(
-        "PORTAL_MODULES",
-        "nginx=http://127.0.0.1:8400,bind=http://127.0.0.1:5000",
-    )
-    for part in raw.split(","):
-        part = part.strip()
-        if not part or "=" not in part:
-            continue
-        name, url = part.split("=", 1)
-        MODULES[name.strip()] = url.strip().rstrip("/")
+def sync_modules(entries=None):
+    """Rebuild the enabled module map from registry entries."""
+    MODULES.clear()
+    for e in (entries if entries is not None else registry.load()):
+        if e.get("enabled", True) and e.get("url"):
+            MODULES[e["name"]] = e["url"]
 
 
-_parse_modules()
+def entries():
+    """All registry entries (enabled and disabled), with module url."""
+    return registry.load()
+
+
+sync_modules()
 
 
 class BackendError(Exception):

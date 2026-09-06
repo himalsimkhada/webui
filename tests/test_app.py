@@ -9,17 +9,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import app as a  # noqa: E402
 import backends  # noqa: E402
 import metrics  # noqa: E402
+import registry  # noqa: E402
 
 PASSWORD = "test-password-123"
 
 
 @pytest.fixture()
-def client():
+def client(tmp_path, monkeypatch):
     a.WEBUI_PASSWORD = PASSWORD
     a._login_failures.clear()
     a._login_locked_until.clear()
     a.app.config["TESTING"] = True
-    return a.app.test_client()
+    monkeypatch.setattr(registry, "SERVICE_REGISTRY_FILE", str(tmp_path / "services.json"))
+    monkeypatch.setenv("PORTAL_MODULES", "")
+    registry.reset()
+    backends.sync_modules()
+    yield a.app.test_client()
+    registry.reset()
 
 
 def _login(client, password=PASSWORD, remember=False):
@@ -85,7 +91,9 @@ class FakeResp:
 
 
 def test_modules_lists_backends(client, monkeypatch):
-    monkeypatch.setattr(backends, "MODULES", {"x": "http://b:1"})
+    monkeypatch.setattr(backends, "entries", lambda: [{
+        "name": "x", "type": "other", "url": "http://b:1",
+        "enabled": True, "created": 1}])
     monkeypatch.setattr(backends, "health",
                         lambda name: {"ok": True, "online": True, "ready": True, "endpoint": "/healthz"})
     _login(client)
@@ -93,7 +101,87 @@ def test_modules_lists_backends(client, monkeypatch):
     assert r.status_code == 200
     mods = r.get_json()["data"]
     assert mods[0]["name"] == "x"
+    assert mods[0]["type"] == "other"
     assert mods[0]["online"] is True
+
+
+def test_modules_disabled_shows_offline(client, monkeypatch):
+    monkeypatch.setattr(backends, "entries", lambda: [{
+        "name": "x", "type": "nginx", "url": "http://b:1",
+        "enabled": False, "created": 1}])
+    _login(client)
+    r = client.get("/api/modules")
+    mod = r.get_json()["data"][0]
+    assert mod["enabled"] is False
+    assert mod["online"] is False
+
+
+# ── Service registry API ─────────────────────────────────────────────────
+
+def test_services_empty(client):
+    _login(client)
+    assert client.get("/api/services").get_json()["data"] == []
+
+
+def test_services_add_and_list(client, monkeypatch):
+    monkeypatch.setattr(backends, "health",
+                        lambda name: {"ok": True, "online": True, "ready": True, "endpoint": "/healthz"})
+    _login(client)
+    r = client.post("/api/services", json={
+        "name": "nginx-us", "type": "nginx", "url": "192.168.1.10:8400"})
+    assert r.status_code == 200
+    assert r.get_json()["data"]["url"] == "http://192.168.1.10:8400"
+    # synced into the module map
+    assert "nginx-us" in backends.module_names()
+    svcs = client.get("/api/services").get_json()["data"]
+    assert svcs[0]["name"] == "nginx-us"
+    assert svcs[0]["type"] == "nginx"
+    assert svcs[0]["online"] is True
+
+
+def test_services_add_invalid(client):
+    _login(client)
+    assert client.post("/api/services", json={"name": "../x", "url": "http://a:1"}).status_code == 400
+    assert client.post("/api/services", json={"name": "ok", "url": "ftp://a:1"}).status_code == 400
+
+
+def test_services_duplicate_name(client):
+    _login(client)
+    client.post("/api/services", json={"name": "a", "url": "http://x:1"})
+    assert client.post("/api/services", json={"name": "a", "url": "http://y:2"}).status_code == 400
+
+
+def test_services_update_disable(client):
+    _login(client)
+    client.post("/api/services", json={"name": "a", "type": "nginx", "url": "http://x:1"})
+    r = client.put("/api/services/a", json={"enabled": False})
+    assert r.status_code == 200
+    svc = client.get("/api/services").get_json()["data"][0]
+    assert svc["enabled"] is False
+    assert svc["online"] is False
+    assert "a" not in backends.module_names()
+
+
+def test_services_update_404(client):
+    _login(client)
+    assert client.put("/api/services/nope", json={"url": "http://x:1"}).status_code == 400
+
+
+def test_services_delete(client):
+    _login(client)
+    client.post("/api/services", json={"name": "a", "url": "http://x:1"})
+    assert client.delete("/api/services/a").status_code == 200
+    assert client.get("/api/services").get_json()["data"] == []
+
+
+def test_services_test_probe(client, monkeypatch):
+    monkeypatch.setattr(backends, "health",
+                        lambda name: {"ok": True, "online": True, "ready": True})
+    _login(client)
+    client.post("/api/services", json={"name": "a", "url": "http://x:1"})
+    d = client.post("/api/services/a/test", json={}).get_json()["data"]
+    assert d["online"] is True
+    assert client.post("/api/services/ghost/test", json={}).status_code == 400
 
 
 def test_proxy_forwards_and_returns_json(client, monkeypatch):

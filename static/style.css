@@ -131,6 +131,22 @@ tr:hover { background: var(--input-bg); }
 }
 .badge.green { color: var(--green); border-color: var(--green); }
 .badge.red { color: var(--red); border-color: var(--red); }
+.badge.type-badge { color: var(--primary); border-color: var(--primary); }
+
+/* service registry + config editor */
+.svc-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+.svc-form input, .svc-form select { min-width: 140px; }
+.editor-textarea {
+  font-family: ui-monospace, monospace !important;
+  font-size: 12.5px !important;
+  line-height: 1.45;
+  background: var(--code-bg) !important;
+  white-space: pre;
+  tab-size: 4;
+}
+details.svc-form { margin-top: 12px; }
+details.svc-form summary { cursor: pointer; color: var(--primary); font-size: 13px; }
+details.svc-form .svc-form { margin-top: 10px; }
 
 /* login */
 .login-view { display: flex; justify-content: center; align-items: flex-start; padding-top: 8vh; }

@@ -7,6 +7,7 @@ from datetime import timedelta
 from flask import Flask, jsonify, request, render_template, session, Response
 import backends
 import metrics
+import registry
 import system_info
 
 app = Flask(__name__)
@@ -180,12 +181,98 @@ def api_system():
 @app.route("/api/modules")
 def api_modules():
     mods = []
-    for name in backends.module_names():
-        h = backends.health(name)
-        entry = {"name": name, "url": backends.base_url(name), "online": h.get("online", False)}
-        entry.update({k: v for k, v in h.items() if k not in ("ok",)})
+    for e in backends.entries():
+        entry = {
+            "name": e["name"],
+            "type": e.get("type", "other"),
+            "url": e["url"],
+            "enabled": e.get("enabled", True),
+        }
+        if entry["enabled"]:
+            h = backends.health(e["name"])
+            entry["online"] = h.get("online", False)
+            entry.update({k: v for k, v in h.items() if k not in ("ok",)})
+        else:
+            entry["online"] = False
+            entry["ready"] = False
+            entry["endpoint"] = None
         mods.append(entry)
     return _ok(mods)
+
+
+# ── Service registry ─────────────────────────────────────────────────────────
+
+@app.route("/api/services", methods=["GET", "POST"])
+def api_services():
+    if request.method == "GET":
+        out = []
+        for e in backends.entries():
+            svc = {"name": e["name"], "type": e.get("type", "other"),
+                   "url": e["url"], "enabled": e.get("enabled", True),
+                   "created": e.get("created")}
+            if svc["enabled"]:
+                h = backends.health(e["name"])
+                svc["online"] = h.get("online", False)
+                svc["ready"] = h.get("ready", False)
+                if h.get("error"):
+                    svc["error"] = h["error"]
+            else:
+                svc["online"] = False
+                svc["ready"] = False
+            out.append(svc)
+        return _ok(out)
+    body = request.get_json(silent=True) or {}
+    if not backends.valid_name(body.get("name", "")):
+        return _err("Name must be letters, digits, '-' or '_'")
+    try:
+        entry = registry.add(
+            body["name"], body.get("url", ""),
+            type=body.get("type", "other"),
+            enabled=body.get("enabled", True),
+        )
+    except ValueError as e:
+        return _err(str(e))
+    backends.sync_modules()
+    return _ok(entry, msg="Service added")
+
+
+@app.route("/api/services/<name>", methods=["PUT", "DELETE"])
+def api_service(name):
+    if not backends.valid_name(name):
+        return _err("Invalid service name")
+    if request.method == "DELETE":
+        try:
+            registry.remove(name)
+        except (ValueError, OSError) as e:
+            return _err(str(e))
+        backends.sync_modules()
+        return _ok(msg="Service removed")
+    body = request.get_json(silent=True) or {}
+    try:
+        entry = registry.update(
+            name,
+            url=body.get("url"),
+            type=body.get("type"),
+            enabled=body.get("enabled"),
+        )
+    except ValueError as e:
+        return _err(str(e))
+    backends.sync_modules()
+    return _ok(entry, msg="Service updated")
+
+
+@app.route("/api/services/<name>/test", methods=["POST"])
+def api_service_test(name):
+    entry = registry.get(name)
+    if not entry:
+        return _err("Unknown service")
+    h = backends.health(name)
+    entry = dict(entry)
+    entry["online"] = h.get("online", False)
+    entry["ready"] = h.get("ready", False)
+    if h.get("error"):
+        entry["error"] = h["error"]
+    return _ok(entry)
 
 
 @app.route("/api/module/<name>/auth")
