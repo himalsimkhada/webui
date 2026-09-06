@@ -196,8 +196,6 @@ details.svc-form .svc-form { margin-top: 10px; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
 .field { display: flex; flex-direction: column; gap: 5px; }
-.field-check { justify-content: flex-end; padding-bottom: 8px; }
-.field-check .svc-check { white-space: nowrap; }
 .field label, .svc-check { font-size: 13px; }
 .field input, .field select { width: 100%; }
 .field input:focus, .field select:focus, .editor-textarea:focus {
