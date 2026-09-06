@@ -505,12 +505,14 @@ async function loadNginx() {
 async function ngxStatus() {
   const r = await api(NX("api/status"));
   const s = r.data || {};
+  const src = s.status_source === "agent" ? "host agent" : s.status_source === "http" ? "http probe" : "local /proc";
   $("nstat-grid").innerHTML = [
     statBox("Version", s.version || "--"),
     statBox("Running", s.running ? "running" : "stopped", s.running ? "green" : "red"),
     statBox("Workers", s.workers),
     statBox("Master pid", s.master_pid),
     statBox("Config", s.config_file || "--"),
+    statBox("Status via", src),
   ].join("");
 }
 
@@ -631,9 +633,10 @@ function proxyTlsToggle(p) {
   const on = $(p + "-tls").checked;
   $(p + "-tls-sec").classList.toggle("hidden", !on);
   $(p + "-redirect-row").classList.toggle("hidden", !on);
+  const httpsRow = $(p + "-https-row");
+  if (httpsRow) httpsRow.classList.toggle("hidden", !on);
   const httpsEl = $(p + "-https-port");
-  if (!httpsEl) return;
-  if (on) {
+  if (httpsEl && on) {
     const cur = httpsEl.value.trim();
     const n = parseInt(cur, 10);
     if (!cur || isNaN(n) || n <= 0) httpsEl.value = 443;
@@ -833,10 +836,10 @@ function openNewSite() {
           <input id="nsite-http-port" type="number" value="80">
           <span class="svc-hint">Main port for plain sites; redirect block when TLS is on.</span>
         </div>
-        <div class="field">
+        <div class="field hidden" id="nsite-https-row">
           <label>HTTPS port</label>
           <input id="nsite-https-port" type="number" value="443">
-          <span class="svc-hint">TLS server block — used when TLS is enabled.</span>
+          <span class="svc-hint">TLS server block — defaults to 443 when TLS is enabled.</span>
         </div>
       </div>
       <div class="field">
@@ -882,10 +885,10 @@ async function openEditSite(name) {
             <input id="esite-http-port" type="number" value="${f.http_listen == null ? (f.listen == null ? 80 : f.listen) : f.http_listen}">
             <span class="svc-hint">Main port for plain sites; redirect block when TLS is on.</span>
           </div>
-          <div class="field">
+          <div class="field ${f.ssl ? "" : "hidden"}" id="esite-https-row">
             <label>HTTPS port</label>
             <input id="esite-https-port" type="number" value="${f.ssl ? (f.listen == null ? "" : f.listen) : ""}">
-            <span class="svc-hint">TLS server block — used when TLS is enabled.</span>
+            <span class="svc-hint">TLS server block — defaults to 443 when TLS is enabled.</span>
           </div>
         </div>
         <div class="field">
