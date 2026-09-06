@@ -631,18 +631,12 @@ function proxyTlsToggle(p) {
   const on = $(p + "-tls").checked;
   $(p + "-tls-sec").classList.toggle("hidden", !on);
   $(p + "-redirect-row").classList.toggle("hidden", !on);
-  const portEl = $(p + "-port");
-  if (!portEl) return;
+  const httpsEl = $(p + "-https-port");
+  if (!httpsEl) return;
   if (on) {
-    const cur = portEl.value.trim();
+    const cur = httpsEl.value.trim();
     const n = parseInt(cur, 10);
-    if (!cur || isNaN(n) || n === 80) {
-      portEl.value = 443;
-      portEl.dataset.autoTls = "1";
-    }
-  } else if (portEl.dataset.autoTls === "1") {
-    if ((parseInt(portEl.value, 10) || 0) === 443) portEl.value = 80;
-    delete portEl.dataset.autoTls;
+    if (!cur || isNaN(n) || n <= 0) httpsEl.value = 443;
   }
 }
 
@@ -835,9 +829,14 @@ function openNewSite() {
           <span class="svc-hint">Config file id — optional, defaults from the domain.</span>
         </div>
         <div class="field">
-          <label>Listen port</label>
-          <input id="nsite-port" type="number" value="80">
-          <span class="svc-hint">External port of the server block.</span>
+          <label>HTTP port</label>
+          <input id="nsite-http-port" type="number" value="80">
+          <span class="svc-hint">Main port for plain sites; redirect block when TLS is on.</span>
+        </div>
+        <div class="field">
+          <label>HTTPS port</label>
+          <input id="nsite-https-port" type="number" value="443">
+          <span class="svc-hint">TLS server block — used when TLS is enabled.</span>
         </div>
       </div>
       <div class="field">
@@ -879,9 +878,14 @@ async function openEditSite(name) {
             <span class="svc-hint">Config file id — changing it renames the site file.</span>
           </div>
           <div class="field">
-            <label>Listen port</label>
-            <input id="esite-port" type="number" value="${f.listen === null || f.listen === undefined ? "" : f.listen}">
-            <span class="svc-hint">External port of the server block.</span>
+            <label>HTTP port</label>
+            <input id="esite-http-port" type="number" value="${f.http_listen == null ? (f.listen == null ? 80 : f.listen) : f.http_listen}">
+            <span class="svc-hint">Main port for plain sites; redirect block when TLS is on.</span>
+          </div>
+          <div class="field">
+            <label>HTTPS port</label>
+            <input id="esite-https-port" type="number" value="${f.ssl ? (f.listen == null ? "" : f.listen) : ""}">
+            <span class="svc-hint">TLS server block — used when TLS is enabled.</span>
           </div>
         </div>
         <div class="field">
@@ -940,17 +944,22 @@ async function saveEditedSite() {
   const name = $("esite-name").value.trim();
   const domain = $("esite-domain").value.trim();
   const upstream = $("esite-upstream").value.trim();
-  const port = parseInt($("esite-port").value || "80", 10);
+  const tls = $("esite-tls").checked;
+  const httpPort = parseInt($("esite-http-port").value || "80", 10);
+  const httpsPort = parseInt($("esite-https-port").value || "443", 10);
+  const port = tls ? httpsPort : httpPort;
+  const badPort = (p) => isNaN(p) || p < 1 || p > 65535;
   if (!name) { fail("Application name is required."); return; }
   if (!/^[\w.-]+$/.test(name)) { fail("Application name may only contain letters, digits, '.' , '-' or '_'."); return; }
   if (!domain) { fail("Domain is required."); return; }
   if (!upstream) { fail("Upstream URL is required."); return; }
+  if (badPort(httpPort) || badPort(httpsPort)) { fail("HTTP and HTTPS ports must be between 1 and 65535."); return; }
   try {
     const res = await api(NX("api/site/" + encodeURIComponent(EDIT.name)), {
       method: "PUT",
       body: JSON.stringify({
-        domain, upstream, port, websocket: $("esite-ws").checked, new_name: name,
-        tls: $("esite-tls").checked,
+        domain, upstream, port, http_port: httpPort, websocket: $("esite-ws").checked, new_name: name,
+        tls,
         cert: $("esite-cert").value.trim() || null,
         key: $("esite-key").value.trim() || null,
         redirect_http: $("esite-redirect").checked,
@@ -991,7 +1000,11 @@ async function nginxCreateSite() {
   const name = $("nsite-name").value.trim();
   const domain = $("nsite-domain").value.trim();
   const up = $("nsite-upstream").value.trim();
-  const port = parseInt($("nsite-port").value || "80", 10);
+  const tls = $("nsite-tls").checked;
+  const httpPort = parseInt($("nsite-http-port").value || "80", 10);
+  const httpsPort = parseInt($("nsite-https-port").value || "443", 10);
+  const port = tls ? httpsPort : httpPort;
+  const badPort = (p) => isNaN(p) || p < 1 || p > 65535;
   const fail = (msg) => {
     errEl.textContent = msg;
     errEl.classList.remove("hidden");
@@ -1000,14 +1013,14 @@ async function nginxCreateSite() {
   if (!domain) { fail("Domain is required."); return; }
   if (!up) { fail("Upstream URL is required."); return; }
   if (name && !/^[\w.-]+$/.test(name)) { fail("Site name may only contain letters, digits, '.' , '-' or '_'."); return; }
-  if (port < 1 || port > 65535) { fail("Listen port must be between 1 and 65535."); return; }
+  if (badPort(httpPort) || badPort(httpsPort)) { fail("HTTP and HTTPS ports must be between 1 and 65535."); return; }
   if (!/^https?:\/\//.test(up)) { fail("Upstream must start with http:// or https://"); return; }
   try {
     await api(NX("api/site"), {
       method: "POST",
       body: JSON.stringify({
-        name, domain, upstream: up, port, websocket: $("nsite-ws").checked,
-        tls: $("nsite-tls").checked,
+        name, domain, upstream: up, port, http_port: httpPort, websocket: $("nsite-ws").checked,
+        tls,
         cert: $("nsite-cert").value.trim() || null,
         key: $("nsite-key").value.trim() || null,
         redirect_http: $("nsite-redirect").checked,
