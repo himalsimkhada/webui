@@ -543,8 +543,12 @@ async function loadNginxFile(readOnly) {
     const r = await api(NX("api/config/file/" + encodeURIComponent(name)));
     EDIT = { kind: "file", name };
     const ro = (readOnly === true) || (isNginxConf(name) && !NCONF_UNLOCKED.has(name));
+    const envHint = name === ".env"
+      ? "nginx-webui settings (NGINX_STATUS_URL / NGINX_CTL_URL …) — restart the service to apply. "
+      : "";
     $("nconf-content").value = r.data.content || "";
     $("nconf-meta").textContent = (isNginxConf(name) ? "⚠ nginx.conf — change with care. " : "")
+      + envHint
       + (r.data.path || name)
       + (ro ? " · read-only (click Edit to unlock)" : " · editable");
     $("nconf-content").readOnly = ro;
