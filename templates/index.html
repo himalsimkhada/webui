@@ -63,16 +63,32 @@
   <section id="view-services" class="view">
     <div class="card">
       <h3>Add Service</h3>
-      <div class="svc-form">
-        <input id="svc-name" placeholder="name (e.g. nginx-us-e)" />
-        <select id="svc-type">
-          <option value="nginx">nginx</option>
-          <option value="bind">BIND</option>
-          <option value="other">other</option>
-        </select>
-        <input id="svc-url" placeholder="host or URL e.g. 192.168.1.10 or http://h:8400" />
-        <input id="svc-port" type="number" placeholder="port (optional)" style="width:110px" />
-        <label><input type="checkbox" id="svc-https" /> https</label>
+      <div class="svc-fields">
+        <div class="svc-field">
+          <label>Name</label>
+          <input id="svc-name" placeholder="e.g. nginx-us-e" />
+          <span class="svc-hint">Unique ID shown in the UI.</span>
+        </div>
+        <div class="svc-field">
+          <label>Type</label>
+          <select id="svc-type">
+            <option value="nginx">nginx</option>
+            <option value="bind">BIND</option>
+            <option value="other">other</option>
+          </select>
+          <span class="svc-hint">Decides which panel manages it.</span>
+        </div>
+        <div class="svc-field">
+          <label>Host or URL</label>
+          <input id="svc-url" placeholder="e.g. 192.168.1.10" />
+          <span class="svc-hint">Set https to reach it over TLS.</span>
+        </div>
+        <div class="svc-field">
+          <label>Port</label>
+          <input id="svc-port" type="number" placeholder="e.g. 8400" />
+          <span class="svc-hint">Backend port. Optional if in the URL.</span>
+        </div>
+        <label class="svc-check"><input type="checkbox" id="svc-https" /> Use https</label>
         <button id="svc-add-btn" onclick="addService()">Add Service</button>
       </div>
       <div id="svc-form-error" class="status-error hidden"></div>
@@ -101,13 +117,13 @@
       </div>
     </div>
 
-    <div class="card">
-      <h3>Config Files</h3>
+    <div class="card" id="config">
+      <h3>Config Files <span class="dim">— pick a file, or click Edit on a site</span></h3>
       <div class="log-controls">
         <select id="nconf-files" onchange="loadNginxFile()"></select>
         <button onclick="loadNginxFile()">Open</button>
         <button class="primary" onclick="saveNginxFile()">Save</button>
-        <button class="secondary" onclick="nginxAction('check')">Check (nginx -t)</button>
+        <button class="secondary" onclick="saveAndCheck()">Save & Check (nginx -t)</button>
       </div>
       <textarea id="nconf-content" class="editor-textarea" rows="16" spellcheck="false"></textarea>
       <div id="nconf-meta" class="small-text"></div>
@@ -117,20 +133,49 @@
     <div class="card">
       <h3>Sites</h3>
       <table>
-        <thead><tr><th>Name</th><th>State</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Config Path</th><th>State</th><th>Actions</th></tr></thead>
         <tbody id="sites-body"></tbody>
       </table>
-      <details class="svc-form">
-        <summary>New reverse-proxy site</summary>
-        <div class="svc-form">
-          <input id="nsite-name" placeholder="name (optional)" style="width:170px" />
-          <input id="nsite-domain" placeholder="domain e.g. app.example.com" />
-          <input id="nsite-upstream" placeholder="upstream e.g. http://127.0.0.1:3000" />
-          <input id="nsite-port" type="number" placeholder="listen port" value="80" style="width:110px" />
-          <label><input type="checkbox" id="nsite-ws" /> websocket</label>
-          <button onclick="nginxCreateSite()">Create Site</button>
+      <div class="card-actions">
+        <button onclick="toggleSitesForm()" id="sites-form-toggle">New reverse-proxy site</button>
+      </div>
+      <div id="sites-form" class="wizard-form hidden">
+        <div class="wizard-step">
+          <h4>1 · Naming</h4>
+          <div class="wizard-grid">
+            <div class="wizard-field">
+              <label>Site name</label>
+              <input id="nsite-name" placeholder="e.g. myapp" />
+              <span class="svc-hint">Config file id (optional — derived from domain).</span>
+            </div>
+            <div class="wizard-field">
+              <label>Domain</label>
+              <input id="nsite-domain" placeholder="e.g. app.example.com" />
+              <span class="svc-hint">The server_name nginx will match on.</span>
+            </div>
+          </div>
         </div>
-      </details>
+        <div class="wizard-step">
+          <h4>2 · Upstream</h4>
+          <div class="wizard-grid">
+            <div class="wizard-field">
+              <label>Upstream URL</label>
+              <input id="nsite-upstream" placeholder="e.g. http://127.0.0.1:3000" />
+              <span class="svc-hint">Where nginx forwards requests.</span>
+            </div>
+            <div class="wizard-field">
+              <label>Listen on port</label>
+              <input id="nsite-port" type="number" placeholder="e.g. 80" value="80" />
+            </div>
+          </div>
+          <label class="svc-check"><input type="checkbox" id="nsite-ws" /> Enable websocket upgrade</label>
+        </div>
+        <div class="btn-row">
+          <button onclick="nginxCreateSite()">Create Site</button>
+          <button class="secondary" onclick="toggleSitesForm()">Cancel</button>
+        </div>
+        <div id="nsite-form-error" class="status-error hidden"></div>
+      </div>
     </div>
 
     <div class="card">

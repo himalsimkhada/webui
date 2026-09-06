@@ -307,17 +307,15 @@ async function loadServices() {
 async function addService() {
   const name = $("svc-name").value.trim();
   const type = $("svc-type").value;
-  let url = $("svc-url").value.trim();
+  let url = $("svc-url").value.trim().split("/")[0]; // drop any pasted path
   const port = $("svc-port").value.trim();
   if (!name || !url) {
-    $("svc-form-error").textContent = "Name and URL/Host are required.";
+    $("svc-form-error").textContent = "Name and Host/URL are required.";
     $("svc-form-error").classList.remove("hidden");
     return;
   }
   $("svc-form-error").classList.add("hidden");
-  if (/^[\w.-]+[A-Za-z]$/.test(url) && !url.includes("://") && !url.includes(":")) {
-    url = ($("svc-https").checked ? "https://" : "http://") + url;
-  } else if (!url.includes("://")) {
+  if (!url.includes("://")) {
     url = ($("svc-https").checked ? "https://" : "http://") + url;
   }
   if (port && !/:(\d+)\s*$/.test(url.split("/")[2] || "")) {
@@ -441,6 +439,19 @@ async function saveNginxFile() {
   }
 }
 
+async function saveAndCheck() {
+  await saveNginxFile();
+  const out = $("nginx-action-output");
+  out.textContent = "...";
+  try {
+    const r = await api(NX("api/check"), { method: "POST", body: "{}" });
+    const d = r.data || {};
+    out.textContent = d.output || d.error || "OK";
+    toast(d.valid ? "Config OK" : "Config invalid", d.valid !== false);
+  } catch (e) { out.textContent = e.message; toast(e.message, false); }
+  $("nginx-action-output").scrollIntoView({ block: "nearest" });
+}
+
 async function ngxSites() {
   const r = await api(NX("api/sites"));
   const sites = r.data || [];
@@ -448,14 +459,15 @@ async function ngxSites() {
     ? sites.map((s) => `
       <tr>
         <td>${esc(s.name)}</td>
+        <td class="small-text">${esc(s.path || "—")}</td>
         <td><span class="badge ${s.enabled ? "green" : ""}">${s.enabled ? "enabled" : "disabled"}</span></td>
         <td class="btn-row" style="margin:0">
           <button class="secondary" onclick="ngxToggleSite('${esc(s.name)}')">${s.enabled ? "Disable" : "Enable"}</button>
-          <button class="secondary" onclick="editNginxSite('${esc(s.name)}')">Edit</button>
+          <button class="primary" onclick="editNginxSite('${esc(s.name)}')">Edit</button>
           <button class="danger" onclick="deleteNginxSite('${esc(s.name)}')">Delete</button>
         </td>
       </tr>`).join("")
-    : `<tr><td colspan="3" class="small-text">No sites found.</td></tr>`;
+    : `<tr><td colspan="4" class="small-text">No sites found. Use “New reverse-proxy site” to add one.</td></tr>`;
 }
 
 async function ngxToggleSite(name) {
@@ -466,14 +478,24 @@ async function ngxToggleSite(name) {
   } catch (e) { toast(e.message, false); }
 }
 
+function toggleSitesForm() {
+  const form = $("sites-form");
+  const open = form.classList.toggle("hidden");
+  $("sites-form-toggle").textContent = open ? "New reverse-proxy site" : "Hide form";
+  $("nsite-form-error").classList.add("hidden");
+}
+
 async function editNginxSite(name) {
   try {
     const r = await api(NX("api/site/" + encodeURIComponent(name)));
     EDIT = { kind: "site", name };
     $("nconf-content").value = r.data.content || "";
-    $("nconf-meta").textContent = "Editing site: " + r.data.path + " (Save writes it back)";
+    $("nconf-meta").textContent = "Now editing site " + name +
+      (r.data.path ? "  (" + r.data.path + ")" : "") +
+      " — change below then click Save. The dropdown is unchanged.";
     $("nconf-action-output").textContent = "";
-    toast("Editing site " + name + " — Save writes it back");
+    $("nconf-files").blur();
+    window.location.hash = "config";
   } catch (e) { toast(e.message, false); }
 }
 
@@ -487,18 +509,29 @@ async function deleteNginxSite(name) {
 }
 
 async function nginxCreateSite() {
-  const payload = {
-    name: $("nsite-name").value.trim(),
-    domain: $("nsite-domain").value.trim(),
-    upstream: $("nsite-upstream").value.trim(),
-    port: parseInt($("nsite-port").value || "80", 10),
-    websocket: $("nsite-ws").checked,
+  const errEl = $("nsite-form-error");
+  const name = $("nsite-name").value.trim();
+  const domain = $("nsite-domain").value.trim();
+  const up = $("nsite-upstream").value.trim();
+  const port = parseInt($("nsite-port").value || "80", 10);
+  const fail = (msg) => {
+    errEl.textContent = msg;
+    errEl.classList.remove("hidden");
   };
-  if (!payload.domain || !payload.upstream) { toast("Domain and upstream are required", false); return; }
+  errEl.classList.add("hidden");
+  if (!domain) { fail("Domain is required."); return; }
+  if (!up) { fail("Upstream URL is required."); return; }
+  if (name && !/^[\w.-]+$/.test(name)) { fail("Site name may only contain letters, digits, '.' , '-' or '_'."); return; }
+  if (port < 1 || port > 65535) { fail("Listen port must be between 1 and 65535."); return; }
+  if (!/^https?:\/\//.test(up)) { fail("Upstream must start with http:// or https://"); return; }
   try {
-    await api(NX("api/site"), { method: "POST", body: JSON.stringify(payload) });
+    await api(NX("api/site"), {
+      method: "POST",
+      body: JSON.stringify({ name, domain, upstream: up, port, websocket: $("nsite-ws").checked }),
+    });
     toast("Site created");
     $("nsite-name").value = ""; $("nsite-domain").value = ""; $("nsite-upstream").value = "";
+    toggleSitesForm();
     ngxSites();
   } catch (e) { toast(e.message, false); }
 }
