@@ -157,9 +157,26 @@ def test_services_update_disable(client):
     r = client.put("/api/services/a", json={"enabled": False})
     assert r.status_code == 200
     svc = client.get("/api/services").get_json()["data"][0]
-    assert svc["enabled"] is False
+    assert svc["enabled"] is False and svc["name"] == "a"
     assert svc["online"] is False
     assert "a" not in backends.module_names()
+
+
+def test_services_update_rename(client):
+    _login(client)
+    client.post("/api/services", json={"name": "old", "url": "http://x:1"})
+    r = client.put("/api/services/old", json={"name": "new"})
+    assert r.status_code == 200
+    assert r.get_json()["data"]["name"] == "new"
+    names = [s["name"] for s in client.get("/api/services").get_json()["data"]]
+    assert names == ["new"]
+
+
+def test_services_update_rename_collision(client):
+    _login(client)
+    client.post("/api/services", json={"name": "a", "url": "http://x:1"})
+    client.post("/api/services", json={"name": "b", "url": "http://y:2"})
+    assert client.put("/api/services/a", json={"name": "b"}).status_code == 400
 
 
 def test_services_update_404(client):

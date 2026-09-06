@@ -258,10 +258,8 @@ details.svc-form .svc-form { margin-top: 10px; }
 .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 
 /* form ↔ raw config switch inside edit modal */
-.edit-toggles { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-.edit-toggles a { color: var(--muted); text-decoration: none; font-size: 13px; margin: 0 2px; }
-.edit-toggles a.on { color: var(--primary); font-weight: 600; }
-.edit-toggles .small-text { margin-right: 6px; }
+.edit-view-seg { margin-top: 16px; display: flex; align-items: center; gap: 10px; }
+.edit-view-seg .small-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* section headers */
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }

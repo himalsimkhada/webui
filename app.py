@@ -254,6 +254,7 @@ def api_service(name):
             url=body.get("url"),
             type=body.get("type"),
             enabled=body.get("enabled"),
+            name=body.get("name") or None,
         )
     except ValueError as e:
         return _err(str(e))

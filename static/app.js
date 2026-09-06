@@ -358,8 +358,8 @@ function svcForm(svc) {
       <div class="form-row">
         <div class="field">
           <label>Name</label>
-          <input id="svc-name" value="${edit ? esc(svc.name) : ""}" ${edit ? "disabled" : "placeholder=\"e.g. nginx-us-e\" autofocus"}>
-          <span class="svc-hint">${edit ? "Read-only identifier." : "Unique handle shown across the portal."}</span>
+          <input id="svc-name" value="${edit ? esc(svc.name) : ""}" ${edit ? "" : "placeholder=\"e.g. nginx-us-e\" autofocus"}>
+          <span class="svc-hint">${edit ? "Renames the service." : "Unique handle shown across the portal."}</span>
         </div>
         <div class="field">
           <label>Type</label>
@@ -435,23 +435,26 @@ async function addService() {
 }
 
 async function updateService(name) {
+  const newName = $("svc-name").value.trim();
   const type = $("svc-type").value;
   const host = $("svc-host").value.trim();
   const port = $("svc-port").value.trim();
   const errEl = $("svc-form-error");
   const fail = (msg) => { errEl.textContent = msg; errEl.classList.remove("hidden"); };
   errEl.classList.add("hidden");
-  if (!host) { fail("Host is required."); return; }
+  if (!newName || !host) { fail("Name and Host are required."); return; }
+  if (!/^[\w-]+$/.test(newName)) { fail("Name may only contain letters, digits, '-' or '_'."); return; }
   if (port && !/^\d{1,5}$/.test(port)) { fail("Port must be a number (1-65535)."); return; }
   const scheme = $("svc-scheme").dataset.val || "http";
   let url = scheme + "://" + host;
   if (port) url += ":" + port;
   try {
-    await api("/api/services/" + encodeURIComponent(name), {
+    const res = await api("/api/services/" + encodeURIComponent(name), {
       method: "PUT",
-      body: JSON.stringify({ type, url, enabled: $("svc-enabled").checked }),
+      body: JSON.stringify({ name: newName, type, url, enabled: $("svc-enabled").checked }),
     });
-    toast("Service updated");
+    const actual = (res.data && res.data.name) || name;
+    toast(actual !== name ? "Renamed to " + actual : "Service updated");
     closeModal();
     loadServices();
   } catch (e) { fail(e.message); }
@@ -511,7 +514,7 @@ async function ngxStatus() {
 async function loadNginxFiles() {
   try {
     const r = await api(NX("api/config/files"));
-    const files = r.data || [];
+    const files = (r.data || []).filter((f) => f !== "nginx.conf");
     const sel = $("nconf-files");
     sel.innerHTML = files.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
     if (!files.length) {
@@ -605,6 +608,44 @@ let SITE_STEP = 1;
 let SITE_NAME = "";
 let SITE_DOMAIN = "";
 
+function proxyTlsToggle(p) {
+  const on = $(p + "-tls").checked;
+  $(p + "-tls-sec").classList.toggle("hidden", !on);
+  $(p + "-redirect-row").classList.toggle("hidden", !on);
+}
+
+function proxyTlsFields(p, v) {
+  v = v || {};
+  const on = !!(v.tls || v.cert || v.key || v.redirect);
+  return `
+    <label class="svc-check"><input type="checkbox" id="${p}-tls" ${on ? "checked" : ""} onchange="proxyTlsToggle('${p}')"> Enable TLS (https)</label>
+    <div class="form-row ${on ? "" : "hidden"}" id="${p}-tls-sec">
+      <div class="field">
+        <label>Certificate path</label>
+        <input id="${p}-cert" placeholder="/etc/letsencrypt/live/…/fullchain.pem" value="${esc(v.cert || "")}">
+      </div>
+      <div class="field">
+        <label>Key path</label>
+        <input id="${p}-key" placeholder="/etc/letsencrypt/live/…/privkey.pem" value="${esc(v.key || "")}">
+      </div>
+    </div>
+    <label class="svc-check ${on ? "" : "hidden"}" id="${p}-redirect-row">
+      <input type="checkbox" id="${p}-redirect" ${v.redirect ? "checked" : ""}> Redirect HTTP → HTTPS (port 80)
+    </label>
+    <div class="form-row">
+      <div class="field">
+        <label>Max upload size</label>
+        <input id="${p}-body" placeholder="e.g. 10m" value="${esc(v.body || "")}">
+        <span class="svc-hint">client_max_body_size — leave empty for nginx default.</span>
+      </div>
+      <div class="field">
+        <label>Upstream timeout</label>
+        <input id="${p}-timeout" placeholder="e.g. 60s" value="${esc(v.timeout || "")}">
+        <span class="svc-hint">proxy_read_timeout, default is 60s.</span>
+      </div>
+    </div>`;
+}
+
 function siteWizardBody() {
   return `
     <div class="steps">
@@ -639,6 +680,7 @@ function siteWizardBody() {
         </div>
       </div>
       <label class="svc-check"><input type="checkbox" id="nsite-ws"> Enable websocket upgrade</label>
+      ${proxyTlsFields("nsite")}
     </div>
     <div id="nsite-form-error" class="status-error hidden"></div>
     <div class="modal-actions">
@@ -708,6 +750,10 @@ async function openEditSite(name) {
           <span class="svc-hint">Where nginx forwards requests.</span>
         </div>
         <label class="svc-check"><input type="checkbox" id="esite-ws" ${f.websocket ? "checked" : ""}> Enable websocket upgrade</label>
+        ${proxyTlsFields("esite", {
+          tls: f.ssl, cert: f.ssl_certificate, key: f.ssl_certificate_key,
+          redirect: f.redirect_http, body: f.client_max_body_size, timeout: f.proxy_read_timeout,
+        })}
         <div id="esite-form-error" class="status-error hidden"></div>
         <div class="modal-actions">
           <button class="primary" onclick="saveEditedSite()">Save changes</button>
@@ -724,10 +770,12 @@ async function openEditSite(name) {
         </div>
       </div>
       ${canForm ? `
-      <div class="edit-toggles">
-        <span class="small-text">Need more than these fields?</span>
-        <a href="#" onclick="editSiteView('form');return false" class="${canForm ? "on" : ""}" id="edit-link-form">Form</a> ·
-        <a href="#" onclick="editSiteView('config');return false" id="edit-link-config">Raw config</a>
+      <div class="edit-view-seg">
+        <div class="seg">
+          <button type="button" class="seg-btn active" id="edit-link-form" onclick="editSiteView('form')">Form</button>
+          <button type="button" class="seg-btn" id="edit-link-config" onclick="editSiteView('config')">Raw config</button>
+        </div>
+        <span class="small-text">Form covers the essentials — use the raw config for anything else.</span>
       </div>` : ""}`);
   } catch (e) { toast(e.message, false); }
 }
@@ -737,8 +785,8 @@ function editSiteView(v) {
   EDIT_SITE_VIEW = v;
   $("edit-form-sec").classList.toggle("hidden", v !== "form");
   $("edit-config-sec").classList.toggle("hidden", v !== "config");
-  $("edit-link-form").classList.toggle("on", v === "form");
-  $("edit-link-config").classList.toggle("on", v === "config");
+  $("edit-link-form").classList.toggle("active", v === "form");
+  $("edit-link-config").classList.toggle("active", v === "config");
 }
 
 async function saveEditedSite() {
@@ -756,7 +804,15 @@ async function saveEditedSite() {
   try {
     const res = await api(NX("api/site/" + encodeURIComponent(EDIT.name)), {
       method: "PUT",
-      body: JSON.stringify({ domain, upstream, port, websocket: $("esite-ws").checked, new_name: name }),
+      body: JSON.stringify({
+        domain, upstream, port, websocket: $("esite-ws").checked, new_name: name,
+        tls: $("esite-tls").checked,
+        cert: $("esite-cert").value.trim() || null,
+        key: $("esite-key").value.trim() || null,
+        redirect_http: $("esite-redirect").checked,
+        client_max_body_size: $("esite-body").value.trim() || null,
+        proxy_read_timeout: $("esite-timeout").value.trim() || null,
+      }),
     });
     const newName = (res.data && res.data.name) || EDIT.name;
     toast(newName !== EDIT.name ? "Renamed to " + newName : "Saved " + EDIT.name);
@@ -805,7 +861,15 @@ async function nginxCreateSite() {
   try {
     await api(NX("api/site"), {
       method: "POST",
-      body: JSON.stringify({ name, domain, upstream: up, port, websocket: $("nsite-ws").checked }),
+      body: JSON.stringify({
+        name, domain, upstream: up, port, websocket: $("nsite-ws").checked,
+        tls: $("nsite-tls").checked,
+        cert: $("nsite-cert").value.trim() || null,
+        key: $("nsite-key").value.trim() || null,
+        redirect_http: $("nsite-redirect").checked,
+        client_max_body_size: $("nsite-body").value.trim() || null,
+        proxy_read_timeout: $("nsite-timeout").value.trim() || null,
+      }),
     });
     toast("Site created");
     closeModal();

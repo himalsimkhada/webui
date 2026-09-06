@@ -144,11 +144,19 @@ def add(name, url, type="other", enabled=True):
     return entry
 
 
-def update(name, url=None, type=None, enabled=None):
+def update(old_name, url=None, type=None, enabled=None, name=None):
+    """Update an entry (optionally renaming it), persist it, and return it."""
     global _cache
-    entry = get(name)
+    entry = get(old_name)
     if not entry:
-        raise ValueError(f"Unknown service '{name}'")
+        raise ValueError(f"Unknown service '{old_name}'")
+    new_name = name if name is not None else old_name
+    new_name = (new_name or "").strip()
+    if not new_name:
+        raise ValueError("Name is required")
+    if new_name != old_name and get(new_name):
+        raise ValueError(f"A service named '{new_name}' already exists")
+    entry["name"] = new_name
     if url is not None:
         entry["url"] = _validate_url(url)
     if type is not None:
@@ -157,7 +165,7 @@ def update(name, url=None, type=None, enabled=None):
         entry["enabled"] = bool(enabled)
     with _LOCK:
         entries = load()
-        entries = [_normalize(e) if e["name"] != name else entry for e in entries]
+        entries = [_normalize(e) if e["name"] != old_name else entry for e in entries]
         _cache = entries
         _persist(entries)
     return entry

@@ -75,6 +75,23 @@ def test_update_and_disable(reg):
         reg.update("nope", url="http://z:3")
 
 
+def test_update_rename(reg):
+    reg.add("a", "http://x:1", type="nginx")
+    e = reg.update("a", name="b")
+    assert e["name"] == "b"
+    assert reg.get("a") is None
+    assert reg.get("b")["url"] == "http://x:1"
+    reg.reset()
+    assert reg.get("b")["name"] == "b"  # rename survived a reload
+
+
+def test_update_rename_collision(reg):
+    reg.add("a", "http://x:1")
+    reg.add("b", "http://y:2")
+    with pytest.raises(ValueError):
+        reg.update("a", name="b")
+
+
 def test_remove(reg):
     reg.add("a", "http://x:1")
     reg.remove("a")
