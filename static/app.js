@@ -631,6 +631,19 @@ function proxyTlsToggle(p) {
   const on = $(p + "-tls").checked;
   $(p + "-tls-sec").classList.toggle("hidden", !on);
   $(p + "-redirect-row").classList.toggle("hidden", !on);
+  const portEl = $(p + "-port");
+  if (!portEl) return;
+  if (on) {
+    const cur = portEl.value.trim();
+    const n = parseInt(cur, 10);
+    if (!cur || isNaN(n) || n === 80) {
+      portEl.value = 443;
+      portEl.dataset.autoTls = "1";
+    }
+  } else if (portEl.dataset.autoTls === "1") {
+    if ((parseInt(portEl.value, 10) || 0) === 443) portEl.value = 80;
+    delete portEl.dataset.autoTls;
+  }
 }
 
 function proxyTlsFields(p, v) {
