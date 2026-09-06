@@ -102,6 +102,7 @@ let SVC = { nginx: "", bind: "" };
 let EDIT = { kind: "file", name: "" };   // config editor target
 let EDIT_CAN_FORM = false;               // current site editable as a form
 let EDIT_SITE_VIEW = "config";           // current view inside edit modal
+let NCONF_UNLOCKED = new Set();          // config files explicitly unlocked for editing
 
 function servicesOf(type) {
   return SERVICES.filter((s) => s.type === type && s.enabled);
@@ -514,7 +515,7 @@ async function ngxStatus() {
 async function loadNginxFiles() {
   try {
     const r = await api(NX("api/config/files"));
-    const files = (r.data || []).filter((f) => f !== "nginx.conf");
+    const files = r.data || [];
     const sel = $("nconf-files");
     sel.innerHTML = files.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
     if (!files.length) {
@@ -522,29 +523,49 @@ async function loadNginxFiles() {
       $("nconf-content").value = "";
       return;
     }
-    loadNginxFile();
+    loadNginxFile(true);
   } catch (e) {
     $("nconf-action-output").textContent = e.message;
     $("nconf-content").value = "";
   }
 }
 
-async function loadNginxFile() {
+function isNginxConf(name) { return name === "nginx.conf"; }
+
+async function loadNginxFile(readOnly) {
   const name = $("nconf-files").value;
   if (!name) return;
   try {
     const r = await api(NX("api/config/file/" + encodeURIComponent(name)));
     EDIT = { kind: "file", name };
+    const ro = (readOnly === true) || (isNginxConf(name) && !NCONF_UNLOCKED.has(name));
     $("nconf-content").value = r.data.content || "";
-    $("nconf-meta").textContent = r.data.path || name;
+    $("nconf-meta").textContent = (isNginxConf(name) ? "⚠ nginx.conf — change with care. " : "")
+      + (r.data.path || name)
+      + (ro ? " · read-only (click Edit to unlock)" : " · editable");
+    $("nconf-content").readOnly = ro;
     $("nconf-action-output").textContent = "";
   } catch (e) {
     $("nconf-action-output").textContent = e.message;
   }
 }
 
+// re-edit a file explicitly (unlocks nginx.conf)
+async function editNginxFile() {
+  const name = $("nconf-files").value;
+  if (isNginxConf(name)) NCONF_UNLOCKED.add(name);
+  $("nconf-content").readOnly = false;
+  await loadNginxFile(false);
+  toast("Editing " + name);
+}
+
 async function saveNginxFile() {
   const content = $("nconf-content").value;
+  if (EDIT.kind === "file" && isNginxConf(EDIT.name) && !NCONF_UNLOCKED.has(EDIT.name)) {
+    $("nconf-action-output").textContent = "nginx.conf is read-only — click Edit to unlock it.";
+    toast("nginx.conf is read-only — click Edit to unlock", false);
+    return;
+  }
   try {
     if (EDIT.kind === "site") {
       await api(NX("api/site/" + encodeURIComponent(EDIT.name)), {
@@ -603,11 +624,7 @@ async function ngxToggleSite(name) {
   } catch (e) { toast(e.message, false); }
 }
 
-// ── reverse-proxy wizard ────────────────────────────────────────────────────
-let SITE_STEP = 1;
-let SITE_NAME = "";
-let SITE_DOMAIN = "";
-
+// ── reverse-proxy create ─────────────────────────────────────────────────────
 function proxyTlsToggle(p) {
   const on = $(p + "-tls").checked;
   $(p + "-tls-sec").classList.toggle("hidden", !on);
@@ -646,74 +663,39 @@ function proxyTlsFields(p, v) {
     </div>`;
 }
 
-function siteWizardBody() {
-  return `
-    <div class="steps">
-      <div class="step ${SITE_STEP === 1 ? "on" : "done"}">1 · Naming</div>
-      <div class="step ${SITE_STEP === 2 ? "on" : ""}">2 · Upstream</div>
-    </div>
-    <div class="wizard-step ${SITE_STEP === 1 ? "" : "hidden"}">
+function openNewSite() {
+  openModal("New reverse-proxy site", `
+    <div class="modal-form">
       <div class="form-row">
         <div class="field">
-          <label>Site name</label>
-          <input id="nsite-name" placeholder="e.g. myapp" value="${esc(SITE_NAME)}" autofocus>
-          <span class="svc-hint">Optional — defaults from the domain.</span>
+          <label>Application name</label>
+          <input id="nsite-name" placeholder="e.g. myapp" autofocus>
+          <span class="svc-hint">Config file id — optional, defaults from the domain.</span>
         </div>
         <div class="field">
-          <label>Domain</label>
-          <input id="nsite-domain" placeholder="e.g. app.example.com" value="${esc(SITE_DOMAIN)}">
-          <span class="svc-hint">The server_name nginx will match on.</span>
-        </div>
-      </div>
-    </div>
-    <div class="wizard-step ${SITE_STEP === 2 ? "" : "hidden"}">
-      <div class="form-row">
-        <div class="field">
-          <label>Upstream URL</label>
-          <input id="nsite-upstream" placeholder="e.g. http://127.0.0.1:3000" autofocus>
-          <span class="svc-hint">Where nginx forwards requests.</span>
-        </div>
-        <div class="field">
-          <label>Listen on port</label>
+          <label>Listen port</label>
           <input id="nsite-port" type="number" value="80">
           <span class="svc-hint">External port of the server block.</span>
         </div>
       </div>
+      <div class="field">
+        <label>Domain (server_name)</label>
+        <input id="nsite-domain" placeholder="e.g. app.example.com">
+        <span class="svc-hint">The server_name nginx will match on.</span>
+      </div>
+      <div class="field">
+        <label>Upstream (proxy_pass)</label>
+        <input id="nsite-upstream" placeholder="e.g. http://127.0.0.1:3000">
+        <span class="svc-hint">Where nginx forwards requests.</span>
+      </div>
       <label class="svc-check"><input type="checkbox" id="nsite-ws"> Enable websocket upgrade</label>
       ${proxyTlsFields("nsite")}
-    </div>
-    <div id="nsite-form-error" class="status-error hidden"></div>
-    <div class="modal-actions">
-      ${SITE_STEP === 1
-        ? `<button class="secondary" onclick="closeModal()">Cancel</button>
-           <button class="primary" onclick="siteNext()">Next</button>`
-        : `<button class="secondary" onclick="siteBack()">Back</button>
-           <button class="primary" onclick="nginxCreateSite()">Create site</button>`}
-    </div>`;
-}
-
-function openNewSite() {
-  SITE_STEP = 1;
-  openModal("New reverse-proxy site", siteWizardBody());
-}
-
-function siteNext() {
-  const name = $("nsite-name").value.trim();
-  const domain = $("nsite-domain").value.trim();
-  const err = $("nsite-form-error");
-  const fail = (m) => { err.textContent = m; err.classList.remove("hidden"); };
-  err.classList.add("hidden");
-  if (name && !/^[\w.-]+$/.test(name)) { fail("Site name may only contain letters, digits, '.' , '-' or '_'."); return; }
-  if (!domain) { fail("Domain is required."); return; }
-  SITE_NAME = name;
-  SITE_DOMAIN = domain;
-  SITE_STEP = 2;
-  $("modal-body").innerHTML = siteWizardBody();
-}
-
-function siteBack() {
-  SITE_STEP = 1;
-  $("modal-body").innerHTML = siteWizardBody();
+      <div id="nsite-form-error" class="status-error hidden"></div>
+      <div class="modal-actions">
+        <button class="primary" onclick="nginxCreateSite()">Create site</button>
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>`);
 }
 
 async function openEditSite(name) {

@@ -90,10 +90,11 @@
     </div>
 
     <div class="card" id="config">
-      <h3>Config Files <span class="dim">— pick a file, or click Edit on a site</span></h3>
+      <h3>Config Files <span class="dim">— pick a file, hit Edit to change</span></h3>
       <div class="log-controls">
-        <select id="nconf-files" onchange="loadNginxFile()"></select>
-        <button onclick="loadNginxFile()">Open</button>
+        <select id="nconf-files" onchange="loadNginxFile(true)"></select>
+        <button onclick="loadNginxFile(true)">Open</button>
+        <button onclick="editNginxFile()">Edit</button>
         <button class="primary" onclick="saveNginxFile()">Save</button>
         <button class="secondary" onclick="saveAndCheck()">Save & Check (nginx -t)</button>
       </div>
