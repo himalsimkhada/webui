@@ -703,7 +703,7 @@ function renderSslCerts() {
   body.innerHTML = SSL_CERTS.length
     ? SSL_CERTS.map((c) => `
       <tr>
-        <td>${esc(c.name)}</td>
+        <td>${esc(c.name)} ${c.mode === "content" ? `<span class="badge" title="PEM content saved to ${esc(c.cert)}">PEM</span>` : ""}</td>
         <td class="small-text">${esc(c.cert)}</td>
         <td class="small-text">${esc(c.key)}</td>
         <td class="btn-row" style="margin:0">
@@ -715,6 +715,8 @@ function renderSslCerts() {
 }
 
 function sslModal(title, v) {
+  v = v || {};
+  const mode = v.mode === "content" ? "content" : "path";
   openModal(title, `
     <div class="modal-form">
       <div class="field">
@@ -722,13 +724,32 @@ function sslModal(title, v) {
         <input id="ssl-name" value="${esc(v.name || "")}" ${v.name ? "disabled" : ""} placeholder="e.g. letsencrypt-main" autofocus>
         <span class="svc-hint">Shown in the site form dropdown.</span>
       </div>
-      <div class="field">
-        <label>Certificate path</label>
-        <input id="ssl-cert" value="${esc(v.cert || "")}" placeholder="/etc/letsencrypt/live/…/fullchain.pem">
+      <div>
+        <div class="seg">
+          <button type="button" class="seg-btn ${mode === "path" ? "active" : ""}" id="ssl-mode-path" onclick="sslMode('path')">File paths</button>
+          <button type="button" class="seg-btn ${mode === "content" ? "active" : ""}" id="ssl-mode-content" onclick="sslMode('content')">Paste PEM</button>
+        </div>
       </div>
-      <div class="field">
-        <label>Key path</label>
-        <input id="ssl-key" value="${esc(v.key || "")}" placeholder="/etc/letsencrypt/live/…/privkey.pem">
+      <div id="ssl-panel-path" class="modal-form ${mode === "path" ? "" : "hidden"}">
+        <div class="field">
+          <label>Certificate path</label>
+          <input id="ssl-cert" value="${esc(v.cert || "")}" placeholder="/etc/letsencrypt/live/…/fullchain.pem">
+        </div>
+        <div class="field">
+          <label>Key path</label>
+          <input id="ssl-key" value="${esc(v.key || "")}" placeholder="/etc/letsencrypt/live/…/privkey.pem">
+        </div>
+      </div>
+      <div id="ssl-panel-content" class="modal-form ${mode === "content" ? "" : "hidden"}">
+        <div class="field">
+          <label>Certificate content (PEM)</label>
+          <textarea id="ssl-cert-content" class="pem-textarea" rows="6" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----…">${esc(v.cert_content || "")}</textarea>
+        </div>
+        <div class="field">
+          <label>Key content (PEM)</label>
+          <textarea id="ssl-key-content" class="pem-textarea" rows="6" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----…">${esc(v.key_content || "")}</textarea>
+        </div>
+        <p class="svc-hint">Saved to ${esc("ssl/<name>/")} under the nginx config dir so both nginx and this manager can read them.</p>
       </div>
       <div id="ssl-form-error" class="status-error hidden"></div>
       <div class="modal-actions">
@@ -736,6 +757,13 @@ function sslModal(title, v) {
         <button class="secondary" onclick="closeModal()">Cancel</button>
       </div>
     </div>`);
+}
+
+function sslMode(v) {
+  $("ssl-panel-path").classList.toggle("hidden", v !== "path");
+  $("ssl-panel-content").classList.toggle("hidden", v !== "content");
+  $("ssl-mode-path").classList.toggle("active", v === "path");
+  $("ssl-mode-content").classList.toggle("active", v === "content");
 }
 
 function openAddSsl() { sslModal("Add SSL certificate", {}); }
@@ -750,17 +778,24 @@ async function saveSsl(editName) {
   const fail = (m) => { errEl.textContent = m; errEl.classList.remove("hidden"); };
   errEl.classList.add("hidden");
   const name = $("ssl-name").value.trim();
-  const cert = $("ssl-cert").value.trim();
-  const key = $("ssl-key").value.trim();
   if (!name) { fail("Name is required."); return; }
-  if (!cert) { fail("Certificate path is required."); return; }
-  if (!key) { fail("Key path is required."); return; }
+  const contentMode = !$("ssl-panel-content").classList.contains("hidden");
+  const body = { name };
+  if (contentMode) {
+    body.cert_content = $("ssl-cert-content").value;
+    body.key_content = $("ssl-key-content").value;
+    if (!body.cert_content.trim() || !body.key_content.trim()) { fail("Paste both the certificate and key content."); return; }
+  } else {
+    body.cert = $("ssl-cert").value.trim();
+    body.key = $("ssl-key").value.trim();
+    if (!body.cert || !body.key) { fail("Certificate and key paths are required."); return; }
+  }
   try {
     if (editName) {
-      await api(NX("api/ssl/" + encodeURIComponent(editName)), { method: "PUT", body: JSON.stringify({ cert, key }) });
+      await api(NX("api/ssl/" + encodeURIComponent(editName)), { method: "PUT", body: JSON.stringify(body) });
       toast("Certificate updated");
     } else {
-      await api(NX("api/ssl"), { method: "POST", body: JSON.stringify({ name, cert, key }) });
+      await api(NX("api/ssl"), { method: "POST", body: JSON.stringify(body) });
       toast("Certificate added");
     }
     closeModal();

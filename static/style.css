@@ -202,6 +202,7 @@ details.svc-form .svc-form { margin-top: 10px; }
   outline: 2px solid rgba(37, 99, 235, 0.35);
   border-color: var(--primary);
 }
+.pem-textarea { font-family: monospace; resize: vertical; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .modal-actions .primary { background: var(--primary); color: #fff; border-color: var(--primary); }
 .modal-actions .primary:hover { background: var(--primary-hover); }
