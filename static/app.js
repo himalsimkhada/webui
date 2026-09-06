@@ -632,71 +632,104 @@ async function ngxToggleSite(name) {
 function proxyTlsToggle(p) {
   const on = $(p + "-tls").checked;
   $(p + "-tls-sec").classList.toggle("hidden", !on);
-  $(p + "-redirect-row").classList.toggle("hidden", !on);
-  const httpsRow = $(p + "-https-row");
-  if (httpsRow) httpsRow.classList.toggle("hidden", !on);
-  const httpsEl = $(p + "-https-port");
-  if (httpsEl && on) {
-    const cur = httpsEl.value.trim();
-    const n = parseInt(cur, 10);
-    if (!cur || isNaN(n) || n <= 0) httpsEl.value = 443;
+  if (on) {
+    const sslEl = $(p + "-ssl");
+    const fields = $(p + "-ssl-fields");
+    if (sslEl && sslEl.value === "none") sslEl.value = "manual";
+    if (fields) fields.classList.remove("hidden");
+    const httpsEl = $(p + "-https-port");
+    if (httpsEl) {
+      const cur = httpsEl.value.trim();
+      const n = parseInt(cur, 10);
+      if (!cur || isNaN(n) || n <= 0) httpsEl.value = 443;
+    }
+  }
+}
+
+function sslDefault(v, tlsOn) {
+  v = v || {};
+  const matched = SSL_CERTS.find((c) => c.cert === v.cert && c.key === v.key);
+  if (matched) return matched.name;
+  if (v.cert || v.key) return "manual";
+  return tlsOn ? "manual" : "none";
+}
+
+function sslOptions(v, tlsOn) {
+  const cur = sslDefault(v, tlsOn);
+  const sel = (val) => val === cur ? " selected" : "";
+  const list = SSL_CERTS.map((c) =>
+    `<option value="${esc(c.name)}"${sel(c.name)}>${esc(c.name)}</option>`).join("");
+  return `<option value="none"${sel("none")}>None</option>` +
+         `<option value="manual"${sel("manual")}>Manual</option>` + list;
+}
+
+function applySslChoice(p) {
+  const sel = $(p + "-ssl").value;
+  const fields = $(p + "-ssl-fields");
+  if (sel === "none") {
+    $(p + "-tls").checked = false;
+    $(p + "-cert").value = "";
+    $(p + "-key").value = "";
+    proxyTlsToggle(p);
+    return;
+  }
+  $(p + "-tls").checked = true;
+  proxyTlsToggle(p);
+  if (fields) fields.classList.remove("hidden");
+  if (sel === "manual") {
+    $(p + "-cert").value = "";
+    $(p + "-key").value = "";
+    $(p + "-cert").focus();
+    return;
+  }
+  const c = SSL_CERTS.find((x) => x.name === sel);
+  if (c) {
+    $(p + "-cert").value = c.cert;
+    $(p + "-key").value = c.key;
   }
 }
 
 function proxyTlsFields(p, v) {
   v = v || {};
   const on = !!(v.tls || v.cert || v.key || v.redirect);
+  const sval = sslDefault(v, on);
   return `
     <label class="svc-check"><input type="checkbox" id="${p}-tls" ${on ? "checked" : ""} onchange="proxyTlsToggle('${p}')"> Enable TLS (https)</label>
     <div class="form-row ${on ? "" : "hidden"}" id="${p}-tls-sec">
       <div class="field" style="grid-column:1/-1">
-        <label>Saved certificate</label>
+        <label>Certificate</label>
         <select id="${p}-ssl" onchange="applySslChoice('${p}')">
-          ${sslOptions(v)}
+          ${sslOptions(v, on)}
         </select>
-        <span class="svc-hint">Pick a named certificate to auto-fill the paths, or type them manually below.</span>
       </div>
       <div class="field">
-        <label>Certificate path</label>
-        <input id="${p}-cert" placeholder="/etc/letsencrypt/live/…/fullchain.pem" value="${esc(v.cert || "")}">
+        <label>HTTPS port</label>
+        <input id="${p}-https-port" type="number" value="${esc(v.https_port || "443")}">
       </div>
-      <div class="field">
-        <label>Key path</label>
-        <input id="${p}-key" placeholder="/etc/letsencrypt/live/…/privkey.pem" value="${esc(v.key || "")}">
+      <label class="svc-check" style="align-self:end;padding-bottom:8px">
+        <input type="checkbox" id="${p}-redirect" ${v.redirect ? "checked" : ""}> Redirect HTTP → HTTPS
+      </label>
+      <div class="form-row ${sval === "none" ? "hidden" : ""}" id="${p}-ssl-fields" style="grid-column:1/-1">
+        <div class="field">
+          <label>Certificate path</label>
+          <input id="${p}-cert" placeholder="/etc/letsencrypt/live/…/fullchain.pem" value="${esc(v.cert || "")}">
+        </div>
+        <div class="field">
+          <label>Key path</label>
+          <input id="${p}-key" placeholder="/etc/letsencrypt/live/…/privkey.pem" value="${esc(v.key || "")}">
+        </div>
       </div>
     </div>
-    <label class="svc-check ${on ? "" : "hidden"}" id="${p}-redirect-row">
-      <input type="checkbox" id="${p}-redirect" ${v.redirect ? "checked" : ""}> Redirect HTTP → HTTPS (port 80)
-    </label>
     <div class="form-row">
       <div class="field">
         <label>Max upload size</label>
-        <input id="${p}-body" placeholder="e.g. 10m" value="${esc(v.body || "")}">
-        <span class="svc-hint">client_max_body_size — leave empty for nginx default.</span>
+        <input id="${p}-body" placeholder="10m" value="${esc(v.body || "")}">
       </div>
       <div class="field">
         <label>Upstream timeout</label>
-        <input id="${p}-timeout" placeholder="e.g. 60s" value="${esc(v.timeout || "")}">
-        <span class="svc-hint">proxy_read_timeout, default is 60s.</span>
+        <input id="${p}-timeout" placeholder="60s" value="${esc(v.timeout || "")}">
       </div>
     </div>`;
-}
-
-function sslOptions(v) {
-  v = v || {};
-  const matched = SSL_CERTS.find((c) => c.cert === v.cert && c.key === v.key);
-  const list = SSL_CERTS.map((c) =>
-    `<option value="${esc(c.name)}" ${matched && c.name === matched.name ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  return `<option value="">— type paths manually —</option>` + list;
-}
-
-function applySslChoice(p) {
-  const c = SSL_CERTS.find((x) => x.name === $(p + "-ssl").value);
-  if (!c) return;
-  $(p + "-tls").checked = true;
-  proxyTlsToggle(p);
-  $(p + "-cert").value = c.cert;
-  $(p + "-key").value = c.key;
 }
 
 async function loadSslCerts() {
@@ -828,31 +861,26 @@ function openNewSite() {
       <div class="form-row">
         <div class="field">
           <label>Application name</label>
-          <input id="nsite-name" placeholder="e.g. myapp" autofocus>
-          <span class="svc-hint">Config file id — optional, defaults from the domain.</span>
+          <input id="nsite-name" placeholder="optional — defaults from domain" autofocus>
         </div>
         <div class="field">
-          <label>HTTP port</label>
-          <input id="nsite-http-port" type="number" value="80">
-          <span class="svc-hint">Main port for plain sites; redirect block when TLS is on.</span>
+          <label>Domain (server_name)</label>
+          <input id="nsite-domain" placeholder="app.example.com">
         </div>
-        <div class="field hidden" id="nsite-https-row">
-          <label>HTTPS port</label>
-          <input id="nsite-https-port" type="number" value="443">
-          <span class="svc-hint">TLS server block — defaults to 443 when TLS is enabled.</span>
-        </div>
-      </div>
-      <div class="field">
-        <label>Domain (server_name)</label>
-        <input id="nsite-domain" placeholder="e.g. app.example.com">
-        <span class="svc-hint">The server_name nginx will match on.</span>
       </div>
       <div class="field">
         <label>Upstream (proxy_pass)</label>
-        <input id="nsite-upstream" placeholder="e.g. http://127.0.0.1:3000">
-        <span class="svc-hint">Where nginx forwards requests.</span>
+        <input id="nsite-upstream" placeholder="http://127.0.0.1:3000">
       </div>
-      <label class="svc-check"><input type="checkbox" id="nsite-ws"> Enable websocket upgrade</label>
+      <div class="form-row">
+        <div class="field">
+          <label>HTTP port</label>
+          <input id="nsite-http-port" type="number" value="80">
+        </div>
+        <div class="field field-check">
+          <label class="svc-check"><input type="checkbox" id="nsite-ws"> Enable websocket upgrade</label>
+        </div>
+      </div>
       ${proxyTlsFields("nsite")}
       <div id="nsite-form-error" class="status-error hidden"></div>
       <div class="modal-actions">
@@ -878,32 +906,29 @@ async function openEditSite(name) {
           <div class="field">
             <label>Application name</label>
             <input id="esite-name" value="${esc(name)}" autofocus>
-            <span class="svc-hint">Config file id — changing it renames the site file.</span>
           </div>
           <div class="field">
-            <label>HTTP port</label>
-            <input id="esite-http-port" type="number" value="${f.http_listen == null ? (f.listen == null ? 80 : f.listen) : f.http_listen}">
-            <span class="svc-hint">Main port for plain sites; redirect block when TLS is on.</span>
+            <label>Domain (server_name)</label>
+            <input id="esite-domain" value="${esc(f.server_name)}">
           </div>
-          <div class="field ${f.ssl ? "" : "hidden"}" id="esite-https-row">
-            <label>HTTPS port</label>
-            <input id="esite-https-port" type="number" value="${f.ssl ? (f.listen == null ? "" : f.listen) : ""}">
-            <span class="svc-hint">TLS server block — defaults to 443 when TLS is enabled.</span>
-          </div>
-        </div>
-        <div class="field">
-          <label>Domain (server_name)</label>
-          <input id="esite-domain" value="${esc(f.server_name)}">
         </div>
         <div class="field">
           <label>Upstream (proxy_pass)</label>
           <input id="esite-upstream" value="${esc(f.proxy_pass)}">
-          <span class="svc-hint">Where nginx forwards requests.</span>
         </div>
-        <label class="svc-check"><input type="checkbox" id="esite-ws" ${f.websocket ? "checked" : ""}> Enable websocket upgrade</label>
+        <div class="form-row">
+          <div class="field">
+            <label>HTTP port</label>
+            <input id="esite-http-port" type="number" value="${f.http_listen == null ? (f.listen == null ? 80 : f.listen) : f.http_listen}">
+          </div>
+          <div class="field field-check">
+            <label class="svc-check"><input type="checkbox" id="esite-ws" ${f.websocket ? "checked" : ""}> Enable websocket upgrade</label>
+          </div>
+        </div>
         ${proxyTlsFields("esite", {
           tls: f.ssl, cert: f.ssl_certificate, key: f.ssl_certificate_key,
           redirect: f.redirect_http, body: f.client_max_body_size, timeout: f.proxy_read_timeout,
+          https_port: f.ssl ? (f.listen || "443") : "443",
         })}
         <div id="esite-form-error" class="status-error hidden"></div>
         <div class="modal-actions">
