@@ -143,7 +143,12 @@ function populateInstances() {
 }
 
 function switchNginxInstance() { SVC.nginx = $("nginx-instance").value; loadNginx(); }
-function switchBindInstance() { SVC.bind = $("bind-instance").value; loadBind(); }
+function switchBindInstance() {
+  SVC.bind = $("bind-instance").value;
+  BZ.configFile = null;
+  bindConfigFiles = [];
+  bindSection(BZ.sub || "overview");
+}
 
 async function enterNginx() {
   await loadServicesSilently();
@@ -155,7 +160,7 @@ async function enterNginx() {
 async function enterBind() {
   await loadServicesSilently();
   populateInstances();
-  loadBind();
+  bindSection(BZ.sub || "overview");
 }
 
 function openModule(name, type) {
@@ -1151,9 +1156,25 @@ async function restoreFrom(fileInput, url, statusId, jsonB64) {
 }
 
 // ── BIND module ────────────────────────────────────────────────────────────
+const BZ = { zone: null, doc: null, mode: "records", configFile: null, sub: "overview" };
+
+function bindSection(sub) {
+  BZ.sub = sub;
+  document.querySelectorAll(".bind-subnav-btn").forEach((b) => b.classList.toggle("active", b.dataset.bsub === sub));
+  document.querySelectorAll(".bind-sub").forEach((s) => s.classList.add("hidden"));
+  const el = $("bsub-" + sub);
+  if (el) el.classList.remove("hidden");
+  if (sub === "overview") bindStatus();
+  if (sub === "zones") loadBindZones();
+  if (sub === "config") initBindConfig(false);
+  if (sub === "logs") loadBindLogs();
+}
+
 async function loadBind() {
   try {
-    await Promise.all([bindStatus(), bindZones()]);
+    await Promise.all([bindStatus(), loadBindZones()]);
+    if (BZ.sub === "config") initBindConfig(true);
+    if (BZ.sub === "logs") loadBindLogs();
   } catch (e) { toast("BIND module: " + e.message, false); }
 }
 
@@ -1164,25 +1185,14 @@ async function bindStatus() {
     st = r.data || {};
   } catch (e) { /* keep empty */ }
   $("bstat-grid").innerHTML = [
-    statBox("Status", st.running ? "running" : "--", st.running ? "green" : ""),
+    statBox("Status", st.running ? "Running" : "--", st.running ? "green" : ""),
     statBox("Version", st.version || "--"),
     statBox("Zones", st.zones || "--"),
     statBox("Workers", st.workers || "--"),
+    statBox("Boot time", st.boot_time || "--"),
     statBox("Query log", st.query_logging || "--"),
-    statBox("Host", st.host || "--"),
   ].join("");
-}
-
-async function bindZones() {
-  try {
-    const r = await api(BD("api/zones"));
-    const z = r.data || [];
-    $("bzone-body").innerHTML = z.map((x) => `
-      <tr><td>${esc(x.name)}</td><td>${esc(x.source)}</td><td>${x.records || "--"}</td></tr>`).join("");
-    $("bzone-note").textContent = z.length + " zone(s)";
-  } catch (e) {
-    $("bzone-note").textContent = "Zones unavailable: " + e.message;
-  }
+  $("bind-action-output").textContent = "";
 }
 
 async function bindAction(action) {
@@ -1190,7 +1200,7 @@ async function bindAction(action) {
   out.textContent = "...";
   try {
     const r = await api(BD("api/control/" + action), { method: "POST", body: "{}" });
-    out.textContent = r.message || "OK";
+    out.textContent = r.data || r.message || "OK";
     bindStatus();
   } catch (e) { out.textContent = e.message; toast(e.message, false); }
 }
@@ -1211,10 +1221,472 @@ async function bindBackup() {
   } catch (e) { toast(e.message, false); }
 }
 
+// ── BIND zones: master/detail ─────────────────────────────────────────────
+function bindZonesDetail(mode) {
+  BZ.mode = mode;
+  $("bsw-records").classList.toggle("active", mode === "records");
+  $("bsw-mapper").classList.toggle("active", mode === "mapper");
+  $("bmapper-panel").classList.toggle("hidden", mode !== "mapper");
+  if (mode === "mapper") {
+    $("bzone-detail").classList.add("hidden");
+    $("bzone-placeholder").classList.add("hidden");
+  } else {
+    const has = !!(BZ.zone && BZ.doc);
+    $("bzone-detail").classList.toggle("hidden", !has);
+    $("bzone-placeholder").classList.toggle("hidden", has);
+  }
+}
+
+async function loadBindZones() {
+  try {
+    const r = await api(BD("api/zones"));
+    const all = r.data || [];
+    const q = ($("bzone-search").value || "").trim().toLowerCase();
+    const f = $("bzone-filter").value;
+    const filtered = all.filter((z) => (f === "all" || z.source === f) && (!q || z.name.toLowerCase().includes(q)));
+    $("bcount").textContent = "· " + filtered.length + (filtered.length === 1 ? " zone" : " zones");
+    $("bzone-empty").classList.toggle("hidden", filtered.length > 0);
+    const list = $("bzone-list");
+    list.innerHTML = "";
+    filtered.forEach((z) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "zone-item" + (z.name === BZ.zone ? " active" : "");
+      const srcCls = z.source === "default" ? "default" : "local";
+      item.innerHTML = `<span class="zone-item-name">${esc(z.name)}</span>
+        <span class="zone-item-tags">
+          <span class="zone-item-type">${esc(z.type)}</span>
+          <span class="zone-item-src ${srcCls}">${esc(z.source)}</span>
+        </span>`;
+      item.dataset.zone = z.name;
+      item.onclick = () => viewBindZone(z.name);
+      list.appendChild(item);
+    });
+    if (BZ.zone && !all.some((z) => z.name === BZ.zone)) {
+      BZ.zone = null;
+      BZ.doc = null;
+    }
+    bindZonesDetail(BZ.mode);
+  } catch (e) {
+    $("bzone-empty").classList.remove("hidden");
+    $("bzone-empty").textContent = "Zones unavailable: " + e.message;
+  }
+}
+
+// ── BIND add-zone wizard ──────────────────────────────────────────────────
+let bindWizardMode = "simple";
+let _bindWzPreviewTimer = null;
+
+function showBindAddZone() {
+  bindWizardMode = "simple";
+  $("bwz-status").classList.add("hidden");
+  $("bind-addzone-mask").classList.remove("hidden");
+  $("bwizard-simple").classList.remove("hidden");
+  $("bwizard-advanced").classList.add("hidden");
+  $("btab-simple").classList.add("active");
+  $("btab-advanced").classList.remove("active");
+  updateBindWizardPreview();
+  $("bwz-name").focus();
+}
+
+function hideBindAddZone() { $("bind-addzone-mask").classList.add("hidden"); }
+
+function bindWizardTab(mode) {
+  bindWizardMode = mode;
+  $("bwizard-simple").classList.toggle("hidden", mode !== "simple");
+  $("bwizard-advanced").classList.toggle("hidden", mode !== "advanced");
+  $("btab-simple").classList.toggle("active", mode === "simple");
+  $("btab-advanced").classList.toggle("active", mode === "advanced");
+  if (mode === "advanced") $("bwz-name-adv").focus();
+  else updateBindWizardPreview();
+}
+
+function bindWizardZoneName() {
+  return (bindWizardMode === "simple" ? $("bwz-name").value : $("bwz-name-adv").value).trim();
+}
+
+function bindWizardRecords(name) {
+  const ttl = parseInt($("bwz-ttl").value, 10) || 3600;
+  const ip = ($("bwz-ip").value || "").trim() || "127.0.0.1";
+  const recs = [];
+  if ($("bp-ns").checked) {
+    recs.push({ name: "@", type: "NS", value: "ns1." + name + "." });
+    recs.push({ name: "ns1", type: "A", value: ip });
+  }
+  if ($("bp-ns2").checked) recs.push({ name: "ns2", type: "A", value: ip });
+  if ($("bp-www").checked) recs.push({ name: "www", type: "A", value: ip });
+  if ($("bp-mail").checked) {
+    recs.push({ name: "mail", type: "A", value: ip });
+    recs.push({ name: "@", type: "MX", value: "10 mail." + name + "." });
+  }
+  if ($("bp-txt").checked) recs.push({ name: "@", type: "TXT", value: "v=spf1 ip4:" + ip + " -all" });
+  return recs;
+}
+
+function updateBindWizardPreview() {
+  const name = $("bwz-name").value.trim();
+  const el = $("bwz-preview");
+  if (!name) { el.textContent = "Enter a zone name to see it live."; return; }
+  if (!/^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+\.?$/.test(name)) {
+    el.textContent = "Zone names look like example.com (letters, numbers, hyphens, dots).";
+    return;
+  }
+  clearTimeout(_bindWzPreviewTimer);
+  _bindWzPreviewTimer = setTimeout(() => {
+    api(BD("api/zone/preview"), {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        ttl: parseInt($("bwz-ttl").value, 10) || 3600,
+        records: bindWizardRecords(name),
+      }),
+    }).then((r) => {
+      el.textContent = r.data && r.data.body ? r.data.body : "Preview error: " + (r.error || "");
+    }).catch((e) => { el.textContent = "Preview error: " + e.message; });
+  }, 150);
+}
+
+function showBindWzError(msg) {
+  const el = $("bwz-status");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+async function createBindZone() {
+  const name = bindWizardZoneName();
+  if (!name) return showBindWzError("Enter a zone name");
+  $("bwz-status").classList.add("hidden");
+  const payload = { name, type: bindWizardMode === "simple" ? $("bwz-type").value : "master" };
+  if (bindWizardMode === "simple") {
+    payload.records = bindWizardRecords(name);
+    payload.ttl = parseInt($("bwz-ttl").value, 10) || 3600;
+  } else {
+    payload.body = $("bwz-raw").value;
+    if (!payload.body.trim()) return showBindWzError("Paste a zone file first, or use the Simple tab");
+  }
+  try {
+    await api(BD("api/zone"), { method: "POST", body: JSON.stringify(payload) });
+    toast("Zone created");
+    hideBindAddZone();
+    loadBindZones();
+    viewBindZone(name);
+  } catch (e) { showBindWzError(e.message); }
+}
+
+// ── BIND zone detail ──────────────────────────────────────────────────────
+async function viewBindZone(name) {
+  BZ.zone = name;
+  bindZonesDetail("records");
+  document.querySelectorAll(".zone-item").forEach((el) => el.classList.toggle("active", el.dataset.zone === name));
+  try {
+    const r = await api(BD("api/zone/" + encodeURIComponent(name)));
+    BZ.doc = r.data;
+    $("bzone-detail").classList.remove("hidden");
+    $("bzone-detail-name").textContent = name;
+    $("bzone-info").innerHTML = `<span class="zone-info-path">File: <code>${esc(r.data.path)}</code></span>`;
+    renderBindZoneSource(r.data.source);
+    $("bzone-raw-editor").value = r.data.raw;
+    $("bzone-raw-wrap").classList.add("hidden");
+    $("bzone-raw-status").textContent = "";
+    $("bzone-check-output").textContent = "";
+    const body = $("brecords-body");
+    body.innerHTML = "";
+    (r.data.records || []).forEach((rec, i) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${esc(rec.name)}</td><td>${esc(rec.ttl)}</td><td>${esc(rec.type)}</td>
+        <td>${esc(rec.value)}</td>
+        <td><button class="danger" style="padding:2px 8px" onclick="deleteBindRecord(${i})">x</button></td>`;
+      body.appendChild(tr);
+    });
+  } catch (e) { toast(e.message, false); }
+}
+
+function renderBindZoneSource(source) {
+  const el = $("bzone-source");
+  if (BZ.doc.protected) {
+    el.innerHTML = `<span class="zone-source-tag default">Protected system zone in named.conf.default-zones</span>
+      <span class="small-text">Cannot be moved or deleted</span>`;
+  } else if (source === "default") {
+    el.innerHTML = `<span class="zone-source-tag default">In named.conf.default-zones</span>
+      <button class="secondary" style="margin-left:8px" onclick="moveBindZoneSource('local')">Move back to local</button>
+      <span class="small-text">Zone block lives in named.conf.default-zones</span>`;
+  } else {
+    el.innerHTML = `<span class="zone-source-tag local">In named.conf.local</span>
+      <button class="secondary" style="margin-left:8px" onclick="moveBindZoneSource('default')">Move to default-zones</button>
+      <span class="small-text">Automatically adds the zone block to named.conf.default-zones</span>`;
+  }
+}
+
+async function moveBindZoneSource(target) {
+  if (!BZ.zone) return;
+  try {
+    const r = await api(BD("api/zone/" + encodeURIComponent(BZ.zone) + "/source"), {
+      method: "POST", body: JSON.stringify({ target }),
+    });
+    toast(r.message || "Moved");
+    viewBindZone(BZ.zone);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function addBindRecord() {
+  if (!BZ.zone) return;
+  const data = {
+    name: $("brec-name").value.trim() || "@",
+    type: $("brec-type").value,
+    value: $("brec-value").value.trim(),
+    ttl: parseInt($("brec-ttl").value, 10) || 3600,
+  };
+  if (!data.value) return toast("Value required", false);
+  try {
+    await api(BD("api/zone/" + encodeURIComponent(BZ.zone) + "/record"), {
+      method: "POST", body: JSON.stringify(data),
+    });
+    toast("Record added");
+    $("brec-name").value = "";
+    $("brec-value").value = "";
+    viewBindZone(BZ.zone);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteBindRecord(idx) {
+  if (!BZ.zone) return;
+  try {
+    await api(BD("api/zone/" + encodeURIComponent(BZ.zone) + "/record/" + idx), { method: "DELETE", body: "{}" });
+    toast("Record removed");
+    viewBindZone(BZ.zone);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteBindZone() {
+  if (!BZ.zone) return;
+  if (!confirm("Delete zone " + BZ.zone + "?")) return;
+  try {
+    await api(BD("api/zone/" + encodeURIComponent(BZ.zone)), { method: "DELETE", body: "{}" });
+    toast("Zone deleted");
+    BZ.zone = null;
+    BZ.doc = null;
+    bindZonesDetail("records");
+    loadBindZones();
+  } catch (e) { toast(e.message, false); }
+}
+
+function toggleBindRaw() {
+  const wrap = $("bzone-raw-wrap");
+  const hidden = wrap.classList.contains("hidden");
+  wrap.classList.toggle("hidden");
+  if (hidden) {
+    $("bzone-raw-editor").value = (BZ.doc && BZ.doc.raw) || "";
+    $("bzone-raw-status").textContent = "";
+  }
+}
+
+async function saveBindRawZone() {
+  if (!BZ.zone) return;
+  try {
+    await api(BD("api/zone/" + encodeURIComponent(BZ.zone) + "/file"), {
+      method: "PUT", body: JSON.stringify({ content: $("bzone-raw-editor").value }),
+    });
+    toast("Zone file saved");
+    $("bzone-raw-status").textContent = "Saved. Reloaded BIND.";
+    viewBindZone(BZ.zone);
+  } catch (e) {
+    toast(e.message, false);
+    $("bzone-raw-status").textContent = "Error: " + e.message;
+  }
+}
+
+async function revertBindRawZone() {
+  if (!BZ.zone) return;
+  try {
+    const r = await api(BD("api/zone/" + encodeURIComponent(BZ.zone)));
+    BZ.doc = r.data;
+    $("bzone-raw-editor").value = r.data.raw;
+    $("bzone-raw-status").textContent = "Reverted to saved version.";
+  } catch (e) { toast(e.message, false); }
+}
+
+async function checkBindZone() {
+  if (!BZ.zone) return;
+  const el = $("bzone-check-output");
+  try {
+    const r = await api(BD("api/zone/" + encodeURIComponent(BZ.zone) + "/check"));
+    const d = r.data || {};
+    el.textContent = d.output || (d.valid ? "Zone is valid" : "Error: " + (d.error || ""));
+    el.style.color = d.valid ? "var(--green)" : "var(--red)";
+  } catch (e) {
+    el.textContent = e.message;
+    el.style.color = "var(--red)";
+  }
+}
+
+// ── BIND host mapper ──────────────────────────────────────────────────────
+function clearBindMapper() {
+  $("bmapper-input").value = "";
+  $("bmapper-output").classList.add("hidden");
+  $("bmapper-output").textContent = "";
+}
+
+async function runBindMapper() {
+  const text = $("bmapper-input").value;
+  if (!text.trim()) return toast("Enter host lines first", false);
+  const out = $("bmapper-output");
+  out.classList.remove("hidden");
+  out.textContent = "Mapping...";
+  try {
+    const r = await api(BD("api/map-hosts"), { method: "POST", body: JSON.stringify({ text }) });
+    const s = r.data.summary;
+    const lines = [];
+    lines.push(`=== Summary: ${s.created} added, ${s.duplicates_skipped} duplicates skipped, ${s.missing_zones} missing zone(s), ${s.bad_lines} bad line(s) ===`);
+    if ((s.missing_zone_names || []).length) {
+      lines.push("Missing zones (create them first or skip): " + s.missing_zone_names.join(", "));
+    }
+    lines.push("");
+    (r.data.results || []).forEach((res) => lines.push(`[${res.type}] ${res.message}`));
+    out.textContent = lines.join("\n");
+    toast(s.created + " records added");
+    loadBindZones();
+  } catch (e) {
+    out.textContent = "Error: " + e.message;
+  }
+}
+
+// ── BIND dig ──────────────────────────────────────────────────────────────
+async function runBindDig() {
+  const q = $("bdig-q").value.trim();
+  if (!q) return toast("Enter a name to look up", false);
+  const type = $("bdig-type").value;
+  const server = $("bdig-server").value.trim();
+  const el = $("bdig-output");
+  el.textContent = "Querying...";
+  try {
+    const r = await api(BD("api/dig"), { method: "POST", body: JSON.stringify({ q, type, server }) });
+    const d = r.data;
+    el.textContent = `> dig @${d.server} ${d.query} ${d.type}\n\n` + d.output;
+  } catch (e) { el.textContent = "Error: " + e.message; }
+}
+
+// ── BIND config editor ────────────────────────────────────────────────────
+let bindConfigFiles = [];
+
+async function initBindConfig(force) {
+  if (force) { $("bconfig-tabs").innerHTML = ""; bindConfigFiles = []; }
+  if (bindConfigFiles.length) return;
+  try {
+    const r = await api(BD("api/config/files"));
+    bindConfigFiles = r.data || [];
+    const tabs = $("bconfig-tabs");
+    tabs.innerHTML = "";
+    bindConfigFiles.forEach((f, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tab" + (i === 0 ? " active" : "");
+      btn.textContent = f;
+      btn.onclick = () => switchBindConfigTab(f, btn);
+      tabs.appendChild(btn);
+    });
+    if (bindConfigFiles.length) {
+      BZ.configFile = bindConfigFiles[0];
+      await loadBindConfig(false);
+    }
+  } catch (e) {
+    $("bconfig-output").textContent = e.message;
+  }
+}
+
+function switchBindConfigTab(name, btn) {
+  document.querySelectorAll("#bconfig-tabs .tab").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+  BZ.configFile = name;
+  loadBindConfig(false);
+}
+
+async function loadBindConfig() {
+  if (!BZ.configFile) return;
+  $("bconfig-output").textContent = "";
+  try {
+    const r = await api(BD("api/config/file/" + encodeURIComponent(BZ.configFile)));
+    $("bconfig-editor").value = r.data && typeof r.data === "string" ? r.data
+      : (r.data && r.data.content != null ? r.data.content : (r.data || ""));
+  } catch (e) {
+    $("bconfig-output").textContent = e.message;
+  }
+}
+
+async function saveBindConfig() {
+  if (!BZ.configFile) return;
+  try {
+    const r = await api(BD("api/config/file/" + encodeURIComponent(BZ.configFile)), {
+      method: "PUT", body: JSON.stringify({ content: $("bconfig-editor").value }),
+    });
+    toast(r.message || "Saved");
+    $("bconfig-output").textContent = (r.message || "Saved") + ". Reload to apply.";
+  } catch (e) {
+    toast(e.message, false);
+    $("bconfig-output").textContent = e.message;
+  }
+}
+
+async function checkBindConfig() {
+  try {
+    const r = await api(BD("api/config/check"));
+    const d = r.data || {};
+    const output = $("bconfig-output");
+    output.textContent = d.valid ? "Config is valid" : "Error: " + (d.error || "");
+    output.style.color = d.valid ? "var(--green)" : "var(--red)";
+  } catch (e) { $("bconfig-output").textContent = e.message; }
+}
+
+// ── BIND logs ─────────────────────────────────────────────────────────────
+async function loadBindLogs() {
+  const lines = $("blog-lines").value;
+  const query = $("blog-filter").value;
+  const el = $("blog-output");
+  el.textContent = "Loading...";
+  try {
+    const r = await api(BD("api/logs?lines=" + lines + "&query=" + encodeURIComponent(query)));
+    const text = r.data || "No logs.";
+    el.innerHTML = "";
+    String(text).split("\n").forEach((line) => {
+      let cls = "log-info";
+      if (/error|fail|denied|fatal/i.test(line)) cls = "log-error";
+      else if (/warn|warning/i.test(line)) cls = "log-warn";
+      const span = document.createElement("span");
+      span.className = cls;
+      span.textContent = line + "\n";
+      el.appendChild(span);
+    });
+  } catch (e) {
+    el.textContent = "Error: " + e.message;
+  }
+}
+
 // ── wire up file inputs ──────────────────────────────────────────────────
 $("nrestore-file").addEventListener("change", () => restoreFrom($("nrestore-file"), NX("api/restore"), "nbackup-status", true));
 $("brestore-file").addEventListener("change", () => restoreFrom($("brestore-file"), BD("api/restore"), "bbackup-status", false));
 $("login-remember").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
 $("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+
+// ── BIND zone list + wizard + dig wiring ─────────────────────────────────
+$("bzone-search").addEventListener("input", loadBindZones);
+$("bzone-filter").addEventListener("change", loadBindZones);
+["bwz-name", "bwz-ttl", "bwz-ip"].forEach((id) => $(id).addEventListener("input", updateBindWizardPreview));
+["bp-ns", "bp-www", "bp-mail", "bp-txt", "bp-ns2"].forEach((id) => $(id).addEventListener("change", updateBindWizardPreview));
+["bwz-name", "bwz-name-adv"].forEach((id) => $(id).addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); createBindZone(); }
+}));
+$("bind-addzone-mask").addEventListener("keydown", (e) => { if (e.key === "Escape") hideBindAddZone(); });
+$("bdig-q").addEventListener("keydown", (e) => { if (e.key === "Enter") runBindDig(); });
+$("blog-filter").addEventListener("keydown", (e) => { if (e.key === "Enter") loadBindLogs(); });
+$("bmapper-file").addEventListener("change", function () {
+  const file = this.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    $("bmapper-input").value = e.target.result;
+    toast("File loaded. Click Map Hosts.");
+  };
+  reader.readAsText(file);
+  this.value = "";
+});
 
 init();

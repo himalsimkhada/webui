@@ -1,0 +1,17 @@
+PORTAL BIND module: full BIND9 UI via facade proxy
+
+Ports the entire bind9-webui front-end into the portal's BIND tab; the
+backend repo is now API-only.
+
+- index.html: BIND tab rebuilt with subnav (Overview / Zones / Dig /
+  Configuration / Logs)
+  * Overview: status from structured rndc, rndc controls, config
+    check, backup/restore
+  * Zones: master/detail list with search+filter, record table,
+    add/edit/delete records, raw zone editor, zone source move,
+    protected-zone rules, check-zone, host mapper, add-zone wizard
+    (simple presets + advanced raw with live preview)
+  * Dig, config file tabs (named.conf*, save/check), colored log tail
+- app.js: port old bind9-webui JS onto the BD() proxy (auto-login via
+  shared WEBUI_PASSWORD); BZ state, instance switch reload
+- style.css: zone list/detail, wizard, bind subnav, log coloring

@@ -305,3 +305,75 @@ button#login-btn { padding: 10px; font-weight: 600; background: var(--primary); 
   max-width: 80vw;
 }
 .toast.status-error { border-color: var(--red); color: var(--red); }
+
+/* BIND module */
+.bind-subnav-card { padding: 10px 16px; }
+.bind-subnav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bind-title { font-size: 13.5px; color: var(--muted); white-space: nowrap; }
+.bind-subnav-sep { flex: 1; }
+.bind-subnav-btn {
+  border: 0; background: transparent; color: var(--muted);
+  padding: 7px 12px; border-radius: 6px; font-size: 13.5px;
+}
+.bind-subnav-btn:hover { background: var(--input-bg); }
+.bind-subnav-btn.active { background: var(--primary); color: #fff; }
+.bind-wizard { max-width: 720px; }
+
+.zones-master-detail { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .zones-master-detail { grid-template-columns: 1fr; } }
+.zones-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.zones-panel-head h3 { margin: 0; }
+.zones-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+.zones-toolbar input[type="search"] { flex: 1; }
+.zones-list { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow: auto; }
+.zone-item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 10px;
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
+  text-align: left; cursor: pointer; color: var(--fg);
+}
+.zone-item:hover { border-color: var(--primary); }
+.zone-item.active { border-color: var(--primary); background: rgba(37, 99, 235, 0.08); }
+.zone-item-name { font-weight: 600; font-size: 13.5px; word-break: break-all; }
+.zone-item-tags { display: flex; gap: 6px; flex-shrink: 0; }
+.zone-item-type, .zone-item-src {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted);
+}
+.zone-item-src.local { color: var(--primary); border-color: var(--primary); }
+.zone-item-src.default { color: var(--yellow); border-color: var(--yellow); }
+.zones-empty { font-size: 13px; color: var(--muted); padding: 18px 4px; text-align: center; }
+.zone-detail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.zone-detail-head h3 { margin: 0; }
+.zone-info-inline { font-size: 12px; color: var(--muted); }
+.zone-info-path code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; }
+.zone-source { margin: 10px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.zone-source-tag { padding: 2px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); }
+.zone-source-tag.local { color: var(--primary); border-color: var(--primary); }
+.zone-source-tag.default { color: var(--yellow); border-color: var(--yellow); }
+.zones-switch { display: flex; gap: 4px; margin-bottom: 10px; }
+.zones-switch-btn {
+  border: 1px solid var(--border); background: var(--input-bg); color: var(--muted);
+  border-radius: 6px 6px 0 0; padding: 7px 16px; font-size: 13px;
+}
+.zones-switch-btn.active { color: #fff; background: var(--primary); border-color: var(--primary); }
+.mapper-hint { font-size: 12.5px; color: var(--muted); margin: 6px 0 10px; }
+.mapper-output { margin-top: 10px; }
+
+/* BIND add-zone wizard */
+.wizard-pane { margin-top: 12px; }
+.wizard-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .wizard-fields { grid-template-columns: 1fr; } }
+.wizard-fields label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.wizard-presets { margin-top: 14px; }
+.wizard-presets h4 { margin: 0 0 6px; font-size: 13px; }
+.preset { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 4px; cursor: pointer; }
+.preset input { accent-color: var(--primary); }
+.wizard-actions { margin-top: 14px; }
+.wizard-actions h4 { margin: 0 0 6px; font-size: 13px; }
+.wz-preview { font-size: 12px; }
+
+/* BIND logs coloring */
+.log-info { color: var(--muted); }
+.log-warn { color: var(--yellow); }
+.log-error { color: var(--red); }
