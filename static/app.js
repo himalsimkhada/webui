@@ -74,7 +74,10 @@ async function init() {
     AUTHD = r.data;
     if (!AUTHD.auth) { showLogin(); return; }
     showApp();
-    switchView("dashboard");
+    const saved = restoreView();
+    const v = saved && ["dashboard", "services", "nginx", "bind"].includes(saved.v) ? saved.v : "dashboard";
+    if (v === "bind" && saved.sub) BZ.sub = saved.sub;
+    switchView(v);
   } catch (e) { showLogin(); }
 }
 async function login() {
@@ -120,7 +123,16 @@ function esc(s) {
 }
 
 // ── views ─────────────────────────────────────────────────────────────────
+let CURRENT_VIEW = "dashboard";
+const VIEW_KEY = "portal-view";
+function saveView() {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ v: CURRENT_VIEW, sub: BZ.sub || null })); } catch (e) {}
+}
+function restoreView() {
+  try { return JSON.parse(localStorage.getItem(VIEW_KEY) || "null"); } catch (e) { return null; }
+}
 function switchView(view) {
+  CURRENT_VIEW = view;
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   $("view-" + view).classList.add("active");
   document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
@@ -128,6 +140,7 @@ function switchView(view) {
   if (view === "services") { loadServices(); }
   if (view === "nginx") enterNginx();
   if (view === "bind") enterBind();
+  saveView();
 }
 
 function populateInstances() {
@@ -1157,6 +1170,7 @@ async function restoreFrom(fileInput, url, statusId, jsonB64) {
 
 // ── BIND module ────────────────────────────────────────────────────────────
 const BZ = { zone: null, doc: null, mode: "records", configFile: null, sub: "overview" };
+let bindZoneFilter = "all";
 
 function bindSection(sub) {
   BZ.sub = sub;
@@ -1168,6 +1182,7 @@ function bindSection(sub) {
   if (sub === "zones") loadBindZones();
   if (sub === "config") initBindConfig(false);
   if (sub === "logs") loadBindLogs();
+  saveView();
 }
 
 async function loadBind() {
@@ -1229,12 +1244,21 @@ function bindZonesDetail(mode) {
   $("bmapper-panel").classList.toggle("hidden", mode !== "mapper");
   if (mode === "mapper") {
     $("bzone-detail").classList.add("hidden");
-    $("bzone-placeholder").classList.add("hidden");
   } else {
     const has = !!(BZ.zone && BZ.doc);
     $("bzone-detail").classList.toggle("hidden", !has);
-    $("bzone-placeholder").classList.toggle("hidden", has);
   }
+}
+
+function toggleBindZoneFilter() {
+  $("bzone-filter-menu").classList.toggle("hidden");
+}
+
+function setBindZoneFilter(v) {
+  bindZoneFilter = v;
+  $("bzone-filter-btn").textContent = v === "default" ? "default-zones" : v;
+  $("bzone-filter-menu").classList.add("hidden");
+  loadBindZones();
 }
 
 async function loadBindZones() {
@@ -1242,7 +1266,7 @@ async function loadBindZones() {
     const r = await api(BD("api/zones"));
     const all = r.data || [];
     const q = ($("bzone-search").value || "").trim().toLowerCase();
-    const f = $("bzone-filter").value;
+    const f = bindZoneFilter;
     const filtered = all.filter((z) => (f === "all" || z.source === f) && (!q || z.name.toLowerCase().includes(q)));
     $("bcount").textContent = "· " + filtered.length + (filtered.length === 1 ? " zone" : " zones");
     $("bzone-empty").classList.toggle("hidden", filtered.length > 0);
@@ -1280,7 +1304,7 @@ let _bindWzPreviewTimer = null;
 function showBindAddZone() {
   bindWizardMode = "simple";
   $("bwz-status").classList.add("hidden");
-  $("bind-addzone-mask").classList.remove("hidden");
+  $("bind-addzone-mask").classList.add("open");
   $("bwizard-simple").classList.remove("hidden");
   $("bwizard-advanced").classList.add("hidden");
   $("btab-simple").classList.add("active");
@@ -1289,7 +1313,7 @@ function showBindAddZone() {
   $("bwz-name").focus();
 }
 
-function hideBindAddZone() { $("bind-addzone-mask").classList.add("hidden"); }
+function hideBindAddZone() { $("bind-addzone-mask").classList.remove("open"); }
 
 function bindWizardTab(mode) {
   bindWizardMode = mode;
@@ -1368,8 +1392,12 @@ async function createBindZone() {
     await api(BD("api/zone"), { method: "POST", body: JSON.stringify(payload) });
     toast("Zone created");
     hideBindAddZone();
-    loadBindZones();
-    viewBindZone(name);
+    $("bzone-search").value = "";
+    bindZoneFilter = "all";
+    $("bzone-filter-btn").textContent = "All";
+    $("bzone-filter-menu").classList.add("hidden");
+    await loadBindZones();
+    await viewBindZone(name);
   } catch (e) { showBindWzError(e.message); }
 }
 
@@ -1561,7 +1589,8 @@ async function runBindDig() {
   try {
     const r = await api(BD("api/dig"), { method: "POST", body: JSON.stringify({ q, type, server }) });
     const d = r.data;
-    el.textContent = `> dig @${d.server} ${d.query} ${d.type}\n\n` + d.output;
+    const at = d.server ? " @" + d.server : "";
+    el.textContent = `> dig${at} ${d.query} ${d.type}\n\n` + d.output;
   } catch (e) { el.textContent = "Error: " + e.message; }
 }
 
@@ -1668,7 +1697,15 @@ $("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") 
 
 // ── BIND zone list + wizard + dig wiring ─────────────────────────────────
 $("bzone-search").addEventListener("input", loadBindZones);
-$("bzone-filter").addEventListener("change", loadBindZones);
+document.addEventListener("click", (e) => {
+  const menu = $("bzone-filter-menu");
+  if (!menu.classList.contains("hidden") && !e.target.closest(".zones-filter")) menu.classList.add("hidden");
+});
+$("bwz-raw").addEventListener("input", () => {
+  if (($("bwz-name-adv").value || "").trim()) return;
+  const m = /^\$ORIGIN\s+([A-Za-z0-9.-]+?)\.?\s*$/m.exec($("bwz-raw").value);
+  if (m) $("bwz-name-adv").value = m[1];
+});
 ["bwz-name", "bwz-ttl", "bwz-ip"].forEach((id) => $(id).addEventListener("input", updateBindWizardPreview));
 ["bp-ns", "bp-www", "bp-mail", "bp-txt", "bp-ns2"].forEach((id) => $(id).addEventListener("change", updateBindWizardPreview));
 ["bwz-name", "bwz-name-adv"].forEach((id) => $(id).addEventListener("keydown", (e) => {
