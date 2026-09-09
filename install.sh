@@ -9,6 +9,7 @@
 #
 # Usage:  sudo ./install.sh   (or: ./install.sh --check | --help)
 # One-liner:  curl -fsSL https://raw.githubusercontent.com/himalsimkhada/webui/main/install.sh | bash
+# Headless:   WEBUI_MODE=1 WEBUI_PASSWORD=x TARGET_DIR=~/webui curl -fsSL ... | bash
 
 set -euo pipefail
 
@@ -32,6 +33,43 @@ die()   { printf '%s%s%s\n' "${C_RED}FATAL:$*${C_RESET}" >&2; exit 1; }
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# ── Input helpers ────────────────────────────────────────────────────────
+# Under `curl ... | bash` stdin is the script stream, and a nested run
+# (`bash ../webui/install.sh` from another streamed installer) inherits that
+# consumed stream, so bare `read` gets EOF instantly. Read from the
+# controlling terminal when one exists; headless runs use env vars instead.
+
+have_tty() { ( exec </dev/tty ) 2>/dev/null; }
+
+read_input() {
+  local var="$1" prompt="${2:-}"
+  local envval=""
+  case "$var" in
+    target) envval="${TARGET_DIR:-}";;
+    choice) envval="${WEBUI_MODE:-}";;
+    ans)    envval="${WEBUI_YES:-}";;
+  esac
+  if [ -n "$envval" ]; then
+    printf -v "$var" '%s' "$envval"
+    return 0
+  fi
+  if have_tty; then
+    read -r -p "$prompt" "$var" < /dev/tty
+  else
+    die "No terminal available and \$$var was not set (${prompt%:}). Re-run from a terminal or set the env var."
+  fi
+}
+
+read_input_silent() {
+  local var="$1" prompt="${2:-}"
+  if have_tty; then
+    read -r -s -p "$prompt" "$var" < /dev/tty
+  else
+    die "No terminal available for password input. Set WEBUI_PASSWORD=... and re-run."
+  fi
+  echo ""
+}
+
 # ── Self-bootstrap ────────────────────────────────────────────────────────
 # Support one-liner installs (curl ... | bash): when the script is streamed
 # there is no repo checkout in $DIR, so fetch the repository first and then
@@ -44,7 +82,7 @@ if [ ! -f "$DIR/app.py" ] || [ ! -f "$DIR/docker-compose.yml" ]; then
 
   default_target="$HOME/webui"
   target=""
-  read -r -p "Install the project into [$default_target]: " target
+  read_input target "Install the project into [$default_target]: " || true
   target="${target:-$default_target}"
 
   mkdir -p "$(dirname "$target")"
@@ -99,24 +137,26 @@ random_secret() {
 }
 
 ask_password() {
-  # Prompts until a non-empty password is given; stores in WEBUI_PASSWORD.
+  # Accepts WEBUI_PASSWORD from the environment (headless runs) or prompts.
   # IMPORTANT: use the SAME value as the backends you want the facade to log
   # into automatically (nginx-webui, bind9-webui share WEBUI_PASSWORD).
-  WEBUI_PASSWORD=""
-  while [ -z "$WEBUI_PASSWORD" ]; do
-    read -r -s -p "    Web UI password (used to log in): " WEBUI_PASSWORD
-    echo ""
-    if [ -z "$WEBUI_PASSWORD" ]; then
-      warn "Password cannot be empty. Leaving it blank is not supported."
-    else
-      read -r -s -p "    Confirm password: " WEBUI_PASSWORD_CONFIRM
-      echo ""
-      if [ "$WEBUI_PASSWORD" != "$WEBUI_PASSWORD_CONFIRM" ]; then
-        warn "Passwords do not match. Try again."
-        WEBUI_PASSWORD=""
+  if [ -z "${WEBUI_PASSWORD:-}" ]; then
+    WEBUI_PASSWORD=""
+    while [ -z "$WEBUI_PASSWORD" ]; do
+      read_input_silent WEBUI_PASSWORD "    Web UI password (used to log in): "
+      if [ -z "$WEBUI_PASSWORD" ]; then
+        warn "Password cannot be empty. Leaving it blank is not supported."
+      else
+        read_input_silent WEBUI_PASSWORD_CONFIRM "    Confirm password: "
+        if [ "$WEBUI_PASSWORD" != "$WEBUI_PASSWORD_CONFIRM" ]; then
+          warn "Passwords do not match. Try again."
+          WEBUI_PASSWORD=""
+        fi
       fi
-    fi
-  done
+    done
+  else
+    ok "Using WEBUI_PASSWORD from the environment"
+  fi
   SECRET_KEY="$(random_secret)"
 }
 
@@ -131,7 +171,7 @@ write_env_file() {
 ensure_docker() {
   if ! has_cmd docker || ! docker compose version >/dev/null 2>&1; then
     warn "Docker with the compose plugin is required but not installed."
-    read -r -p "    Install Docker now? [y/N] " ans
+    read_input ans "    Install Docker now? [y/N] "
     if [ "${ans:-n}" != "y" ] && [ "${ans:-n}" != "Y" ]; then
       die "Docker is required for this mode. Re-run after installing Docker."
     fi
@@ -256,7 +296,7 @@ show_menu() {
   echo "  2) Manual   - admin facade installed directly on this machine"
   echo ""
   while :; do
-    read -r -p "Enter your choice [1-2]: " choice
+    read_input choice "Enter your choice [1-2]: "
     case "$choice" in
       1) mode_docker; return;;
       2) mode_manual; return;;
