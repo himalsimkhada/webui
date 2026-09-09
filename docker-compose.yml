@@ -1,8 +1,9 @@
 # Web UI Admin — admin frontend service for the backend modules.
-# Copy this file to `.env` and edit the values, then run: docker compose up -d --build
+# Copy this file to `.env` and edit the values, then run: docker compose up -d
 services:
   webui:
-    build: .
+    image: ghcr.io/himalsimkhada/webui:latest
+    # build: .   # optional: build the image from this repo instead of pulling
     container_name: webui-admin
     ports:
       - "${WEBUI_PORT:-8080}:8080"
